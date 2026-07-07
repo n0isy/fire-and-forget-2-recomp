@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Fire &amp; Forget II</title>
+<style>
+  :root{ --pad-fg:#e6e9f0; --pad-bd:rgba(230,233,240,.55); }
+  html,body{ margin:0; height:100%; background:#000; overflow:hidden;
+             overscroll-behavior:none; touch-action:none;
+             font-family:system-ui,-apple-system,sans-serif; }
+  body{ display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; }
+
+  /* game window: 4:3 (the CRT aspect for the 320x200 EGA buffer), centred,
+     scaled to fit. On a wide phone this leaves the side margins for the pads. */
+  #canvas{ display:block; background:#000; image-rendering:pixelated;
+           width:min(92vw, calc((100dvh - 150px) * 4 / 3)); aspect-ratio:4 / 3;
+           touch-action:none; }   /* desktop: reserve ~150px for the help block */
+  body.touch #canvas{ width:min(100vw, calc(100dvh * 4 / 3)); }
+
+  /* ---- desktop control help (hidden on touch devices) ---- */
+  #help{ color:#8b93a6; font-size:14px; line-height:1.75; text-align:center;
+         user-select:none; }
+  #help b{ color:#cfd4e0; font-weight:600; }
+  #help kbd{ display:inline-block; min-width:1.4em; padding:1px 7px; margin:0 1px;
+             border:1px solid #3a3e4c; border-bottom-width:2px; border-radius:5px;
+             background:#16181f; color:#d8dbe4; font:12px/1.5 ui-monospace,monospace;
+             text-align:center; }
+  #help .sep{ color:#3f4452; margin:0 10px; }
+  body.touch #help{ display:none; }
+
+  /* ---- fullscreen button (top-right, both modes) ---- */
+  #fs{ position:fixed; top:max(10px, env(safe-area-inset-top));
+       right:max(10px, env(safe-area-inset-right)); z-index:30;
+       width:42px; height:42px; border-radius:10px; border:1px solid #3a3e4c;
+       background:rgba(255,255,255,.06); color:#cfd4e0; font-size:20px;
+       display:flex; align-items:center; justify-content:center; cursor:pointer;
+       -webkit-tap-highlight-color:transparent; user-select:none; touch-action:none; }
+  #fs:active{ background:rgba(255,255,255,.22); }
+  #fs.unsupported{ display:none; }
+
+  /* ---- on-screen controls (touch devices; `?touch` forces) ---- */
+  #pads{ display:none; }
+  body.touch #pads{ display:block; }
+  #pads > div{ position:fixed; bottom:max(4vh, env(safe-area-inset-bottom));
+               z-index:10; touch-action:none; user-select:none;
+               -webkit-user-select:none; -webkit-tap-highlight-color:transparent; }
+  #pad-left{ left:max(3vw, env(safe-area-inset-left)); }
+  #pad-right{ right:max(3vw, env(safe-area-inset-right)); }
+
+  #joy{ position:relative; width:34vmin; max-width:200px; height:34vmin; max-height:200px; }
+
+  /* three action buttons, one-thumb cluster:
+       FIRE (bottom-right, primary) · START·FLY (top) · MISSILE (bottom-left) */
+  #pad-right{ width:40vmin; max-width:236px; height:40vmin; max-height:236px; }
+  .btn{ position:absolute; display:flex; flex-direction:column;
+        align-items:center; justify-content:center;
+        width:16vmin; max-width:96px; height:16vmin; max-height:96px;
+        border:2px solid var(--pad-bd); border-radius:50%;
+        background:rgba(255,255,255,.06); color:var(--pad-fg);
+        font-weight:700; font-size:min(5vmin,26px); line-height:1; letter-spacing:.02em;
+        backdrop-filter:blur(2px); box-shadow:0 2px 10px rgba(0,0,0,.4);
+        transition:background .05s, transform .05s; touch-action:none; padding:0; }
+  .btn small{ font-size:min(2.3vmin,11px); font-weight:600; opacity:.85; margin-top:2px;
+              letter-spacing:.04em; }
+  .btn.active{ background:rgba(255,255,255,.3); transform:scale(.93); }
+  #b-fire { right:0;  bottom:0;  width:19vmin; max-width:112px; height:19vmin; max-height:112px;
+            border-color:rgba(255,120,110,.8); }
+  #b-miss { left:0;   bottom:2%; border-color:rgba(120,180,255,.8); }
+  #b-start{ left:36%; top:0;     border-color:rgba(140,235,160,.8); }
+
+  #rotate{ display:none; position:fixed; inset:0; z-index:40; background:#000;
+           color:#cfd2da; align-items:center; justify-content:center; text-align:center;
+           font-size:18px; padding:24px; }
+  @media (orientation:portrait){ body.touch #rotate{ display:flex; } }
+</style>
+</head>
+<body>
+  <canvas id="canvas" tabindex="0" oncontextmenu="event.preventDefault()"></canvas>
+
+  <!-- desktop keyboard help, explained by game mechanics -->
+  <div id="help">
+    <div><kbd>←</kbd><kbd>→</kbd> <b>steer</b> <span class="sep">·</span>
+         <kbd>↑</kbd> <b>gas</b> <span class="sep">·</span>
+         <kbd>↓</kbd> <b>brake</b></div>
+    <div><b>FIRE</b> <kbd>Space</kbd> or <kbd>Ctrl</kbd> — machine gun; in the menu: insert coin</div>
+    <div><b>START·FLY</b> <kbd>Enter</kbd> or <kbd>Shift</kbd> — start the game; in the race at full throttle: take off / land</div>
+    <div><b>MISSILE</b> — press <b>FIRE</b>+<b>START</b> together (uses fuel)
+         <span class="sep">·</span> <kbd>Esc</kbd> — restart</div>
+  </div>
+
+  <button id="fs" title="Fullscreen" aria-label="Fullscreen">
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+      <path d="M2 6V2h4M12 2h4v4M16 12v4h-4M6 16H2v-4"/>
+    </svg>
+  </button>
+
+  <div id="pads" aria-hidden="true">
+    <div id="pad-left"><div id="joy"></div></div>
+    <div id="pad-right">
+      <button class="btn" id="b-miss"  data-keys="4,5">🚀<small>MISSILE</small></button>
+      <button class="btn" id="b-start" data-keys="5">▲<small>START·FLY</small></button>
+      <button class="btn" id="b-fire"  data-keys="4">🔫<small>FIRE</small></button>
+    </div>
+  </div>
+
+  <div id="rotate">↻ Rotate the device to landscape</div>
+
+  <script src="nipplejs.min.js"></script>
+  <script>
+    var Module = {
+      canvas: (function(){ var c = document.getElementById('canvas');
+        c.addEventListener('webglcontextlost', function(e){ e.preventDefault(); }, false);
+        return c; })(),
+      print:    function(t){ console.log(t); },
+      printErr: function(t){ console.error(t); }
+    };
+    /* the game calls this when it quits (Esc): restart from cold boot by
+       reloading the page — wasm/data are cached, so it is near-instant. */
+    window.ffOnQuit = function(){ location.reload(); };
+
+    /* ---- on-screen controls -> the game's key state (platform_sdl.c keys[]) ----
+       FF_K_*: UP=0 DOWN=1 LEFT=2 RIGHT=3 FIRE=4 START=5. Ref-count each key so a
+       key shared by two controls (FIRE belongs to both the FIRE and MISSILE
+       buttons) only releases when the last holder lets go. */
+    (function(){
+      var kc = [0,0,0,0,0,0,0];
+      function raw(i,on){ if (window.Module && Module._ff_web_key) Module._ff_web_key(i, on?1:0); }
+      function setKey(i,on){
+        var was = kc[i] > 0;
+        kc[i] += on ? 1 : -1; if (kc[i] < 0) kc[i] = 0;
+        var now = kc[i] > 0;
+        if (was !== now) raw(i, now);
+      }
+
+      /* show the pads only on touch devices (or force with ?touch) */
+      var forceTouch = new URLSearchParams(location.search).has('touch');
+      var isTouch = forceTouch || ('ontouchstart' in window) ||
+                    (window.matchMedia && matchMedia('(pointer: coarse)').matches);
+      if (isTouch) document.body.classList.add('touch');
+
+      /* action buttons: pointer events when available, touch+mouse fallback
+         otherwise (older mobile browsers) — never both. */
+      var havePointer = !!window.PointerEvent;
+      Array.prototype.forEach.call(document.querySelectorAll('.btn'), function(b){
+        var keys = b.dataset.keys.split(',').map(Number), held = false;
+        function press(e){ e.preventDefault(); if (held) return; held = true;
+          b.classList.add('active');
+          keys.forEach(function(k){ setKey(k, true); });
+          if (havePointer && e.pointerId !== undefined) {
+            try { b.setPointerCapture(e.pointerId); } catch(_){}
+          } }
+        function release(e){ if (e) e.preventDefault(); if (!held) return; held = false;
+          b.classList.remove('active');
+          keys.forEach(function(k){ setKey(k, false); }); }
+        if (havePointer) {
+          b.addEventListener('pointerdown', press);
+          b.addEventListener('pointerup', release);
+          b.addEventListener('pointercancel', release);
+        } else {
+          b.addEventListener('touchstart', press, {passive:false});
+          b.addEventListener('touchend', release, {passive:false});
+          b.addEventListener('touchcancel', release, {passive:false});
+          b.addEventListener('mousedown', press);
+          b.addEventListener('mouseup', release);
+          b.addEventListener('mouseleave', function(){ release(); });
+        }
+      });
+
+      /* the virtual joystick (nipplejs) -> 8-way arrow keys */
+      if (isTouch && window.nipplejs) {
+        var joy = [0,0,0,0];   // up,down,left,right currently held
+        function setJoy(ns){ for (var i=0;i<4;i++) if (ns[i]!==joy[i]){ setKey(i, ns[i]); joy[i]=ns[i]; } }
+        var manager = nipplejs.create({
+          zone: document.getElementById('joy'),
+          mode: 'static', position: { left: '50%', top: '50%' },
+          color: 'rgba(230,233,240,.6)', size: 130, restJoystick: true, threshold: 0.15
+        });
+        var TH = 0.42;   // deadzone for a cardinal to register
+        manager.on('move', function(evt, data){
+          if (!data || !data.vector){ return; }
+          var x = data.vector.x, y = data.vector.y;   // nipplejs: y positive = UP
+          setJoy([ y >  TH ? 1 : 0,    // UP    = gas
+                   y < -TH ? 1 : 0,    // DOWN  = brake
+                   x < -TH ? 1 : 0,    // LEFT
+                   x >  TH ? 1 : 0 ]); // RIGHT
+        });
+        manager.on('end', function(){ setJoy([0,0,0,0]); });
+      }
+
+      /* ---- fullscreen (best practice: an explicit button; on Android also
+         lock landscape inside the same user gesture; hides where the
+         Fullscreen API is unavailable, e.g. iPhone Safari) ---- */
+      var fs = document.getElementById('fs');
+      var root = document.documentElement;   // fullscreen the PAGE so the pads stay
+      var rfs = root.requestFullscreen || root.webkitRequestFullscreen;
+      if (!rfs) fs.classList.add('unsupported');
+      fs.addEventListener('click', function(){
+        if (document.fullscreenElement || document.webkitFullscreenElement) {
+          (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+          return;
+        }
+        Promise.resolve(rfs.call(root)).then(function(){
+          if (screen.orientation && screen.orientation.lock)
+            screen.orientation.lock('landscape').catch(function(){});
+        }).catch(function(){});
+      });
+
+      /* keep the browser from scrolling/zooming on stray touches */
+      document.addEventListener('touchmove', function(e){ e.preventDefault(); }, { passive:false });
+      window.addEventListener('load', function(){ try { document.getElementById('canvas').focus(); } catch(_){} });
+    })();
+  </script>
+  {{{ SCRIPT }}}
+</body>
+</html>

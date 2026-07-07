@@ -1,0 +1,10 @@
+# built artifacts
+build/
+web/index.html
+web/index.js
+web/index.wasm
+web/index.data
+
+# game data extracted from YOUR copy of the original — never committed
+assets/*
+!assets/.gitkeep
