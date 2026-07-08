@@ -278,6 +278,14 @@ void hud_stage_banner(void)
         hud_text_row((const char *)ffd_txt_bonus, 0x80, 0x1E);
     }
     if (Gb_stage_clear == 0) return;
+    /* fn0BA8_1B27 @5192-5201: the stage-clear FANFARE, one-shot latch d4eb
+     * (bF6DB — proven semantics: the banner-music latch): stage 4 (the final
+     * stage) gets song 9, others song 7, plus the queued jingle 2. */
+    if (Gb_bF6DB == 0) {
+        Gb_bF6DB = 1;
+        snd_sfx_trigger((i16)Gw_stage == 4 ? 9 : 7, 1);
+        snd_sfx_queue(2);
+    }
     hud_text_row((const char *)ffd_txt_stage, 0x80, 0x1E);   /* STAGE        */
     hud_text_row((const char *)Gp_stage_digit, 0xA0, 0x2E);   /* stage number */
     hud_text_row((const char *)ffd_txt_completed, 0x60, 0x3E);   /* COMPLETED    */

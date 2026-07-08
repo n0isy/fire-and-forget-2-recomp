@@ -16,6 +16,9 @@ typedef struct { i16 src, xform; } SrcXf;
 typedef struct { i16 dx, dy; } XY;
 typedef struct { char row[14]; } HighRow;
 typedef struct { u8 frames, mask; } RlePair;
+/* song/SFX table record @0xCFCC (143A:05B7/0643): all fields DGROUP offsets
+ * except tempo; instr is 0xD050 for every entry. */
+typedef struct { u16 dir, instr, tempo, pad; } SndSong;
 #pragma pack(pop)
 
 /* shape-composer op macros (fn0A0D_0D08 opcodes) */
@@ -96,5 +99,16 @@ extern const DecorProto ffd_decor_protos[16];
 extern const u16 ffd_rng_seed[55];
 extern const RlePair ffd_demo_tape[217];
 extern const u16 ffd_game_consts[2];
+
+/* ---- AdLib driver data (data/sound.c; DGROUP offsets in comments) -------- */
+extern const u8  ffd_song_streams[0x3D29];  /* @0x7F69 voice streams          */
+extern const SndSong ffd_song_table[15];    /* @0xCFCC songs/SFX (see ids)    */
+extern const u16 ffd_perc_ptrs[5];          /* @0xD046 sfx_play one-shots     */
+extern const u16 ffd_instr_ptrs[18];        /* @0xD050 instrument ptr table   */
+extern const u8  ffd_song_dirs[0xE8];       /* @0xD074 voice-dir word lists   */
+extern const u8  ffd_opl_cell_reg[19];      /* @0xD1BA cell -> OPL reg offset */
+extern const u8  ffd_opl_chan_cell[11];     /* @0xD1CD channel -> cell        */
+extern const u16 ffd_snd_fnum[12];          /* @0xD1D8 note -> F-number       */
+extern const u8  ffd_instr_patches[0xEA];   /* @0xD1F6 OPL patch records      */
 
 #endif

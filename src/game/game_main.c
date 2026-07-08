@@ -82,6 +82,13 @@ int game_init(const char *asset_dir) {
     char p[320];
     ff_apply_data_tables();
 
+    /* fn143A_0349 sound_init (main @883): OPL init regs + the boot song.
+     * (game_start_level below runs run_level_init, whose stage-song trigger
+     * replaces it — frontend_reset re-arms the boot song for the menu path;
+     * the headless race paths WANT the race song, matching the QEMU race
+     * captures that start at the run_level entry.) */
+    snd_init();
+
     snprintf(p, sizeof p, "%s/cpt/BOB.CPT", asset_dir);
     GC.bob = ff_bob_load(p);
     if (!GC.bob) fprintf(stderr, "warning: BOB load failed (%s)\n", p);

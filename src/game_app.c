@@ -46,7 +46,7 @@ static void frame(void) {
      * frontend_stage_advance() left in ff_fb for a beat (skippable with FIRE),
      * before the next stage's run_level frames overwrite it. */
     if (g_interlude > 0) {
-        if (frontend_wipe_frame()) { ff_present(); return; }   /* ETAPE spiral reveal */
+        if (frontend_wipe_frame()) { snd_frame(); ff_present(); return; }   /* ETAPE spiral reveal */
         if (GC.input[FF_K_FIRE]) g_interlude = 0; else --g_interlude;
         if (g_interlude == 0) {                 /* interlude over -> begin the stage */
             run_level_init();                   /* gameplay palette + fresh stage state */
@@ -54,6 +54,7 @@ static void frame(void) {
             decor_set_accum(0);                 /* wFFFFFFF2 residue (start_level path) */
             ff_set_palette((const uint8_t(*)[3])GC.pal);
         }
+        snd_frame();                            /* the ISR keeps ticking (music) */
         ff_present();
         return;
     }
@@ -63,12 +64,16 @@ static void frame(void) {
      * (fn0DAE_03AA start_level, advance to the next stage); else the death path ->
      * frontend_post_race() (attract loop / GAME OVER). */
     if (!frontend_frame()) {
-        if (!run_level_frame()) {
+        if (!run_level_frame()) {                 /* race ended: no ticks ran   */
             if (Gb_stage_clear != 0 && frontend_stage_advance())
                 g_interlude = 40;                 /* hold the stage-clear interlude */
             else
                 frontend_post_race();
+            snd_frame();                          /* transition frame's ticks   */
         }
+        /* (a race frame ticked inside run_level_frame) */
+    } else {
+        snd_frame();                              /* frontend frame: menu music */
     }
     ff_present();
 }
@@ -241,9 +246,20 @@ int main(int argc, char **argv) {
         /* EVERY-frame PPM dumps over a range: FRAMEPPM_ALL="lo:hi" (+FRAMEPPM_DIR) —
          * the unfiltered end-to-end pixel tests (idle fuel-out run / 1.5-level tape) */
         int palo = -1, pahi = -1; { const char *e = getenv("FRAMEPPM_ALL"); if (e) sscanf(e, "%d:%d", &palo, &pahi); }
+        /* SOUND acceptance log (FF2_SNDLOG=path): per-frame full voice state (S
+         * rows) + the OPL register write stream (W rows) — the sound analog of
+         * the unfiltered pixel tests, in NORMAL play (compare: cmp_sound.py). */
+        FILE *slog = NULL;
+        { const char *e = getenv("FF2_SNDLOG");
+          if (e) { slog = fopen(e, "w"); if (slog) snd_set_log(slog); } }
         printf("frame,EA3C,E9CC,F6C4,DD84,DD86,DE50,DE51,DE52,DE53,F461,F6EC,F682,F6AF,27C9,27CB,EF50,F688,24F1,F468,DC7E,EF4A,DE5D,379F,F6D8,F46A,DC6C,DC6E,27C7\n");
         int f = 0;
         while (f < n) {
+            if (slog) {                     /* pre-frame state (the anchor point) */
+                char srow[1024];
+                snd_state_row(srow, sizeof srow);
+                fprintf(slog, "S,%d,%s\n", f, srow);
+            }
             if (run_level_frame()) {
                 printf("%d,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\n", f,
                     Gw_dist_lo, Gw_speed, Gd_objective, Gw_car_x, Gw_horizon,
@@ -284,6 +300,7 @@ int main(int argc, char **argv) {
             } else break;                                  /* death / demo end */
         }
         if (endshot) ff_screenshot_ppm(endshot, (const uint8_t(*)[3])GC.pal);  /* last gameplay frame */
+        if (slog) { snd_set_log(NULL); fclose(slog); }
         return 0;
     }
 
@@ -456,6 +473,43 @@ int main(int argc, char **argv) {
         while (run_level_frame()) { if (++n > 20000) break; }
         printf("race ended after %d frames (DE50=%d DC6E=%d 27C7=%d EA3A=%d)\n",
                n, Gb_panel_msg, Gb_stage_clear, Gw_stage, Gw_credits);
+        return 0;
+    }
+
+    /* SOUND trace: run N race frames from the attract state, dumping the
+     * per-frame sound state (S rows — the qemu snd.csv columns) and the OPL
+     * register write log (W rows) to stdout. Compare vs qemu/cap_sound.py. */
+    if (argc >= 3 && strcmp(argv[1], "--sndtrace") == 0) {
+        game_init(assets);
+        attract_state();
+        int n = atoi(argv[2]);
+        snd_set_log(stdout);
+        printf("S,frame,BD8E,tempo,d1f2,d044,"
+               "v0_stream,v0_dur,v0_key,v0_note,v0_blk,v0_vol,"
+               "v1_stream,v1_dur,v1_key,v1_note,v1_blk,v1_vol,"
+               "v2_stream,v2_dur,v2_key,v2_note,v2_blk,v2_vol,"
+               "v3_stream,v3_dur,v3_key,v3_note,v3_blk,v3_vol,"
+               "v4_stream,v4_dur,v4_key,v4_note,v4_blk,v4_vol,"
+               "v5_stream,v5_dur,v5_key,v5_note,v5_blk,v5_vol,"
+               "v6_stream,v6_dur,v6_key,v6_note,v6_blk,v6_vol,"
+               "v7_stream,v7_dur,v7_key,v7_note,v7_blk,v7_vol,"
+               "v8_stream,v8_dur,v8_key,v8_note,v8_blk,v8_vol\n");
+        char row[512];
+        for (int i = 0; i < n; i++) {
+            /* the QEMU capture snapshots at the frame ANCHOR (before the
+             * frame's logic + ticks) — dump the state BEFORE the frame runs */
+            snd_state_row(row, sizeof row);
+            printf("S,%d,%s\n", i, row);
+            /* flash/latch debug (stderr): FF2_SND_DBG=lo:hi */
+            { static int lo = -2, hi = -2;
+              if (lo == -2) { const char *e = getenv("FF2_SND_DBG");
+                              if (!e || sscanf(e, "%d:%d", &lo, &hi) != 2) lo = hi = -1; }
+              if (i >= lo && i <= hi)
+                  fprintf(stderr, "D,%d,F6A9=%d,F203=%d,F6DC=%d,F6DA=%d,obj=%u\n",
+                          i, (i16)Gw_flash_timer, (i16)Gw_flash_colour,
+                          Gb_leader_sfx, Gb_obj_sfx_latch, Gd_objective); }
+            if (!run_level_frame()) break;
+        }
         return 0;
     }
 
@@ -665,6 +719,7 @@ int main(int argc, char **argv) {
     }
 
     if (ff_init("Fire & Forget II — recomp (level)", 3) != 0) return 1;
+    ff_sound_start();                  /* OPL synth output (Nuked-OPL3 / WebAudio) */
     game_init(assets);
     frontend_reset(assets);            /* cold boot: TITUS -> PRES -> menu -> race */
     ff_set_palette((const uint8_t(*)[3])GC.pal);

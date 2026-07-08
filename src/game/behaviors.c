@@ -114,7 +114,7 @@ static void pickup_pass(Entity *e, int di, int type)
             if (Gi_missile_fuel > 0x12) Gi_missile_fuel = 0x12;
             break;
         }
-        /* FUN_1c3a_027b(0x16) — pickup sfx, omitted */
+        snd_sfx_play(0x16);                          /* fn143A_027B(0x16) pickup */
     }
     e->type_state = 0xFF;                            /* despawn either way */
     G_ENEMY_COUNT -= 1;                              /* --wF46A            */
@@ -141,12 +141,13 @@ static void ent_die(Entity *e)
                                  * PUT/WAVE): BONUS += 10 + arm the big "BONUS"
                                  * banner d4c2 = 12 parity-frames (ghidra @8465-71;
                                  * the banner draw lives in fn0BA8_1B27's head —
-                                 * hud_cockpit_step; FUN_1c3a_0643(1) sfx omitted) */
+                                 * hud_cockpit_step) */
         u16 lo = G_SCORE_LO;
         G_SCORE_LO = lo + 10;
         if (lo > 0xfff5) G_SCORE_HI += 1;
         Gb_bonus_banner = 0x0C;  /* d4c2 = 0xc — the BONUS banner countdown */
         G_KILL_CTR = 0xff;
+        snd_sfx_queue(1);        /* fn143A_0643(1): the BONUS jingle (@8473) */
     }
     /* accumulate this enemy's point value (scratch @0x29) into the bonus total */
     {
@@ -155,6 +156,7 @@ static void ent_die(Entity *e)
         Gw_score_lo = lo + v;
         Gw_score_hi += (u16)(((i16)v >> 15) + (lo + v < lo));
     }
+    snd_sfx_play(0x13);          /* fn143A_027B(0x13): explosion one-shot (@8479) */
 }
 
 /* pool slot base pointer (raw byte access, offsets as in the ROM; the pool is
@@ -384,7 +386,8 @@ void ent_explosion_small(Entity *e, int di)
         return;
     }
     if ((e->timer & 1) == 0) {
-        Gi_explo_size = 0x3C;                        /* morph pulse (+sfx 0x13) */
+        Gi_explo_size = 0x3C;                        /* morph pulse             */
+        snd_sfx_play(0x13);                          /* fn143A_027B(0x13) @5992 */
     } else {
         Gi_explo_size = 0x50;
     }
@@ -788,7 +791,11 @@ void ent_bouncing_hazard(Entity *e, int di)
     if (p[0x2F] == 0x00) { ent_die(e); return; }
     if (di < 0) {
         if (ent_hit_player_wide(e)) {                   /* screen collision */
-            Gw_flash_timer = 0x1E;                     /* d4b9 (+ sfx 3, omitted) */
+            /* egg-hit SFX (@7395-7401): queued unless already flashing in the
+             * enemy-hit colour (anti-duplicate) */
+            if (Gw_flash_timer == 0 || (i16)Gw_flash_colour != 0x0D)
+                snd_sfx_queue(3);
+            Gw_flash_timer = 0x1E;                     /* d4b9 */
             Gw_flash_colour = 0x0D;                     /* d013 */
         }
         G_ENEMY_COUNT -= 1;
@@ -1062,8 +1069,12 @@ void ent_explosion_large(Entity *e, int di)
         }
         return;
     }
-    if ((*(u16 *)(p + 0x23) & 1) == 0) Gi_explo_size = 0x78;   /* morph pulse (+sfx 0x13) */
-    else                               Gi_explo_size = 0xA0;
+    if ((*(u16 *)(p + 0x23) & 1) == 0) {
+        Gi_explo_size = 0x78;                        /* morph pulse             */
+        snd_sfx_play(0x13);                          /* fn143A_027B(0x13) @6045 */
+    } else {
+        Gi_explo_size = 0xA0;
+    }
     u16 t = *(u16 *)(p + 0x23);
     *(u16 *)(p + 0x23) = (u16)(t - 1);
     if (t == 0) {

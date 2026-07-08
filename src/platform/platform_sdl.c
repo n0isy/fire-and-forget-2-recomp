@@ -75,6 +75,9 @@ static int scancode_to_key(SDL_Scancode s) {
     case SDL_SCANCODE_RETURN:
     case SDL_SCANCODE_KP_ENTER:
     case SDL_SCANCODE_LSHIFT: return FF_K_START;   /* aux/start button (t24B9) */
+    case SDL_SCANCODE_F2:    return FF_K_MUTE;     /* original F2: mute music  */
+    case SDL_SCANCODE_F3:    return FF_K_SFX;      /* original F3: one-shots   */
+    case SDL_SCANCODE_F5:    return FF_K_EXIT;     /* original F5: abort race  */
     case SDL_SCANCODE_ESCAPE:return FF_K_ESC;
     default: return -1;
     }

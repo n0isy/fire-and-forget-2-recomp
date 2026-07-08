@@ -353,6 +353,11 @@ void frontend_reset(const char *asset_dir)
     Gw_credits = 0x00;                 /* no credits at cold boot */
     Gb_demo_flag = 0x00;
     Gb_demo_abort = 0x00;
+    /* NB: the boot-song re-arm lives in FE_BOOT_TITUS's entry (below), NOT
+     * here — frontend_reset is also called by the HEADLESS replay paths right
+     * after run_level_init armed the RACE song; re-arming the boot song here
+     * made `--replay play` race on the boot music (caught by the normal-play
+     * sound acceptance test vs qemu/sndplay1). */
 }
 
 /* One frame of the front-end. Returns 1 while the frontend owns the frame,
@@ -374,7 +379,16 @@ int frontend_frame(void)
     switch (fe_state) {
 
     case FE_BOOT_TITUS:                /* main: TITUS.CPT + asset load */
-        if (!fe_entered) { fe_show_cpt("TITUS.CPT"); fe_wipe_expand(); fe_entered = 1; break; }
+        if (!fe_entered) {
+            /* the boot/menu song: id 6 == the sound_init default (dir 0xD0C2/
+             * tempo 4) — re-armed because game_init's boot-time
+             * game_start_level(0) ran run_level_init, whose stage-song trigger
+             * displaced it (a port-structure artifact; the original loads the
+             * race song only at run_level entry). Only the INTERACTIVE boot
+             * path reaches here — headless replays keep the race song. */
+            snd_sfx_trigger(6, 1);
+            fe_show_cpt("TITUS.CPT"); fe_wipe_expand(); fe_entered = 1; break;
+        }
         if (++fe_hold >= FE_BOOT_HOLD) {
             fe_state = FE_BOOT_PRES; fe_entered = 0; fe_hold = 0;
         }
@@ -448,6 +462,7 @@ int frontend_frame(void)
     case FE_GAMEOVER:                  /* fn13a8_0e13 @4437: GAMEOVER.CPT, t24F1=6 */
         if (!fe_entered) {
             if (Gb_demo_abort != 0x00) {  /* 0e13 gate: demo aborted -> skip the screens */
+                snd_sfx_trigger(6, 1);    /* 0e13 else-exit: the menu song (@4596) */
                 Gw_score_lo = 0x00; Gw_score_hi = 0x00; Gw_lives = 0x04;
                 frontend_reenter();
                 break;
@@ -584,6 +599,7 @@ int frontend_frame(void)
                 Gw_high_hi = Gw_score_hi; Gw_high_lo = Gw_score_lo;
             }
             ne_slot = 6; ne_pos = 3;
+            snd_sfx_trigger(6, 1);        /* 0e13 exit: the menu song (@4593) */
             /* game_main @967-969, AFTER the highscore path: score = 0, lives = 4. */
             Gw_score_lo = 0x00; Gw_score_hi = 0x00;
             Gw_lives = 0x04;

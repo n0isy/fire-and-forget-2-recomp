@@ -73,7 +73,8 @@ void render_frame(void)
  * draw window = screen-centred), vy = v0, y = bb96 + 10. Per frame: enqueue
  * (x, y, spr) via FUN_120d_07cf (centre-x / bottom-y / +PF_Y / 1C73 clip),
  * then x += vx; y -= vy; vy -= 1 (gravity); y > 0x96 -> vy = -vy, y -= vy
- * (ground bounce). (The b409f sfx call FUN_1c3a_027b(0x13) is omitted.) */
+ * (ground bounce). The FUN_1c3a_027b(0x13) tail (@2019) fires only when the
+ * F2 mute toggle b409F is SET (music muted -> the percussion crackle). */
 static void crash_particles_draw(void)
 {
     int spr = (i16)ffd_crash_particle_sprites[g_crash_phase >> 1];
@@ -102,6 +103,7 @@ static void crash_particles_draw(void)
             p->y  = (i16)(p->y - p->vy);
         }
     }
+    if (snd_muted()) snd_sfx_play(0x13);            /* @2019: b409F-gated crackle */
 }
 
 /* Faithful player-vehicle draw (extracted so run_level state drives it). */

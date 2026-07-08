@@ -48,6 +48,10 @@ add_executable(ff2game
     game/decor_ring.c
     game/shape_gen.c
     game/path_vm.c
+    game/sound.c
+    game/data/sound.c
+    platform/opl.c
+    third_party/nuked_opl3/opl3.c
     game/data/wave_data.c
     game/data/enemies.c
     game/data/shapes.c
