@@ -1,5 +1,7 @@
 # Fire & Forget II — Recomp
 
+**▶ Play it in the browser: <https://titustribute.com/ff2/>** (desktop & mobile)
+
 A faithful modern reconstruction (“recompilation”) of **Fire & Forget II: The Death Convoy**
 (Titus Interactive, 1990, DOS/EGA) as portable **C11 + SDL2**, playable natively and in the
 browser via **WebAssembly** — including touch controls for mobile.
@@ -62,6 +64,7 @@ Browser (needs the [emscripten SDK](https://emscripten.org)):
 ```sh
 ./build_wasm.sh          # emits web/index.{html,js,wasm,data}
 # serve web/ with any static file server and open index.html
+# (the reference deployment lives at https://titustribute.com/ff2/)
 ```
 
 ## Controls

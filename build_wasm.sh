@@ -1,9 +1,10 @@
 #!/bin/bash
 # build_wasm.sh — compile the playable level build (ff2game) to WebAssembly and
-# emit web/index.{html,js,wasm,data}. The web/ dir is bind-mounted into the caddy
-# container (ff2web, port 20611) at /srv, so rebuilding here updates the live site
-# at https://20611.public.buan.me instantly (hard-refresh the browser: names are
-# stable). Sources mirror the ff2game target in src/CMakeLists.txt; SDL2 comes from
+# emit web/index.{html,js,wasm,data}. Serve web/ with any static file server;
+# the reference deployment is https://titustribute.com/ff2/ (in the dev sandbox
+# web/ is bind-mounted into a caddy container, so rebuilding updates the site
+# instantly — hard-refresh the browser: file names are stable).
+# Sources mirror the ff2game target in src/CMakeLists.txt; SDL2 comes from
 # emscripten's -sUSE_SDL=2, and the game's assets/ dir is packaged with
 # --preload-file (mounts at "assets", matching FF2_ASSETS=assets / getenv default).
 #
@@ -26,4 +27,4 @@ emcc $SRC -I . -O2 -std=c11 -sUSE_SDL=2 -sALLOW_MEMORY_GROWTH=1 \
      --preload-file ../assets@assets --exclude-file "*dgroup.bin" \
      --shell-file ../web/shell.html \
      -o ../web/index.html
-echo "WASM built -> web/index.{html,js,wasm,data}  (live: https://20611.public.buan.me)"
+echo "WASM built -> web/index.{html,js,wasm,data}  (live: https://titustribute.com/ff2/)"
