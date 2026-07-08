@@ -47,52 +47,63 @@
  * chain, so it is otherwise inert).
  */
 #include "ff_game.h"
-#include "gmem.h"
+#include "gnames.h"
+
+/* THE SPRITE DIRECTORY (de-DGROUP'd): was aDEEE @0xDEEE (+ the aF087 width
+ * table @0xF087). g_sprdir[idx] = {.off = frame/rt-slot, .seg = bank id + 1}. */
+FarPtr g_sprdir[SPRDIR_MAX];
+u8     g_sprw[SPRDIR_MAX];
+
+/* THE DISPLAY-LIST CHAIN (de-DGROUP'd): the 40 entries @0xD7B8 (stride 0x1A)
+ * + the ptrDBC8 far-ptr table. Built for fidelity with the original init;
+ * INERT in the chunky port (dl_flush models the sorted list instead of the
+ * original's fn1187_1C73 chain walk). next.off holds the ENTRY INDEX. */
+typedef struct { u8 head[0x10]; FarPtr next; u8 tail[6]; } DlChainEnt;
+static DlChainEnt s_dlchain[0x28];
+static FarPtr     s_dlchain_ptr[0x28];   /* ptrDBC8[i] -> entry i */
 
 /* fn0A0D_09E4 — ff_display_list_init. Call once, after the sprite banks are
  * loaded, before morph_patch()/the first level. */
 void ff_display_list_init(void)
 {
-    /* (1) 40 display-list far-pointers -> DGROUP:0xD7B8 + i*0x1A (stride 0x1A). */
+    /* (1) the 40 display-list far-pointers (were -> DGROUP:0xD7B8 + i*0x1A);
+     * .off now carries the entry INDEX, .seg the port marker 0. */
     for (int i = 0; i < 0x28; ++i) {
-        GW(0xDBC8 + i * 4) = (u16)(0xD7B8 + i * 0x1A);   /* off  */
-        GW(0xDBCA + i * 4) = 0x0000;                     /* seg = DGROUP (port marker) */
+        s_dlchain_ptr[i].off = (u16)i;
+        s_dlchain_ptr[i].seg = 0x0000;
     }
 
-    /* (2) chain: entry[i].next(off @+0x10, seg @+0x12) = ptrDBC8[i+1], i=0..38. */
-    for (int i = 0; i < 0x27; ++i) {
-        u16 eoff = GW(0xDBC8 + i * 4);                   /* entry i offset in DGROUP */
-        GW(eoff + 0x10) = GW(0xDBC8 + (i + 1) * 4);      /* next off  */
-        GW(eoff + 0x12) = GW(0xDBCA + (i + 1) * 4);      /* next seg  */
-    }
+    /* (2) chain: entry[i].next = ptrDBC8[i+1], i=0..38. */
+    for (int i = 0; i < 0x27; ++i)
+        s_dlchain[i].next = s_dlchain_ptr[i + 1];
 
-    /* (3) terminate: zero the next-ptr of the entry ptrDC68 addresses
-     * (disasm: les bx,[0xdc68]; mov [es:bx+0x12],0; mov [es:bx+0x10],0). The port
-     * only stores when the far ptr targets a DGROUP entry; the chunky render does
-     * not walk the chain, so this is otherwise a no-op. */
+    /* (3) terminate: the original zeroes the next-ptr of the entry the far ptr
+     * ptrDC68 addresses (les bx,[0xdc68]; mov [es:bx+0x12],0; ...) — ptrDC68 is
+     * the lives/carrier cluster, ALWAYS 0 at boot, so the store never fires in
+     * practice; reproduced for the in-chain case only. */
     {
-        u16 toff = GW(0xDC68);                           /* ptrDC68 off half */
-        u16 tseg = GW(0xDC6A);                           /* ptrDC68 seg half */
-        if (tseg == 0x0000 && toff != 0x0000 && (u32)toff + 0x14 <= 0xFFFF) {
-            GW(toff + 0x10) = 0x0000;
-            GW(toff + 0x12) = 0x0000;
+        u16 toff = Gw_lives;                             /* ptrDC68 off half */
+        u16 tseg = Gw_ptrDC68_seg;                       /* ptrDC68 seg half */
+        if (tseg == 0x0000 && toff >= 0xD7B8 && toff < 0xDBC8) {
+            s_dlchain[(toff - 0xD7B8) / 0x1A].next.off = 0x0000;
+            s_dlchain[(toff - 0xD7B8) / 0x1A].next.seg = 0x0000;
         }
     }
 
-    /* (4) register the main bank (ptrDE59 == GC.bob) into aDEEE[0..count). */
+    /* (4) register the main bank (ptrDE59 == GC.bob) into the directory. */
     int count = GC.bob ? ff_bob_count(GC.bob) : 0;
-    GW(0xEF52) = (u16)count;                             /* tEF52 = sprite count */
-    for (int i = 0; i < count; ++i) {
+    Gw_spr_count = (u16)count;                             /* tEF52 = sprite count */
+    for (int i = 0; i < count && i < SPRDIR_MAX; ++i) {
         int w = 0, h = 0;
         ff_bob_dims(GC.bob, i, &w, &h);
-        GW(0xDEEE + i * 4) = (u16)i;                     /* aDEEE[i].off = frame i */
-        GW(0xDEF0 + i * 4) = 0x0001;                     /* aDEEE[i].seg = bank 0 (+1) */
-        GB(0xF087 + i)     = (u8)(w & 0xFF);             /* aF087[i] = width low byte */
+        g_sprdir[i].off = (u16)i;                        /* aDEEE[i].off = frame i */
+        g_sprdir[i].seg = 0x0001;                        /* aDEEE[i].seg = bank 0 (+1) */
+        g_sprw[i]       = (u8)(w & 0xFF);                /* aF087[i] = width low byte */
     }
 
     /* game_main (083C:104) then saves the count: tDE69 = tEF52. Reproduce it so
      * run_level_init's `tEF52 = tDE69` restores the count on every level entry. */
-    GW(0xDE69) = (u16)count;
+    Gw_spr_count_saved = (u16)count;
 }
 
 /* fn0A0D_0B35 — append the 2nd bank (NUC == ptrDC7A) into aDEEE[tEF52 .. ). Does
@@ -105,38 +116,38 @@ static int g_bank2_n;   /* # of 2nd-bank entries actually appended (0 until load
 void sprite_dir_register_bank2(void)
 {
     if (!GC.nuc) return;
-    int base   = (int)GW(0xEF52);
+    int base   = (int)Gw_spr_count;
     int count2 = ff_bob_count(GC.nuc);
     int n = 0;
     for (int j = 0; j < count2; ++j) {
         int idx = base + j;
-        if ((u32)(0xDEEE + idx * 4) + 4 > sizeof(struct Globals)) break;   /* safety */
-        GW(0xDEEE + idx * 4) = (u16)j;                  /* aDEEE[idx].off = NUC frame j */
-        GW(0xDEF0 + idx * 4) = 0x0002;                  /* aDEEE[idx].seg = bank 1 (+1) */
+        if (idx >= SPRDIR_MAX) break;                   /* safety */
+        g_sprdir[idx].off = (u16)j;                     /* aDEEE[idx].off = NUC frame j */
+        g_sprdir[idx].seg = 0x0002;                     /* aDEEE[idx].seg = bank 1 (+1) */
         ++n;
     }
     g_bank2_n = n;
 }
 
-/* ---- aDEEE directory accessors (idx -> bank,frame) ---------------------- */
+/* ---- sprite-directory accessors (idx -> bank,frame) --------------------- */
 static int dir_lookup(int idx, BobBank **bank, int *frame)
 {
-    if (idx < 0 || (u32)(0xDEEE + idx * 4) + 4 > sizeof(struct Globals)) return 0;
-    u16 seg = GW(0xDEF0 + idx * 4);
+    if (idx < 0 || idx >= SPRDIR_MAX) return 0;
+    u16 seg = g_sprdir[idx].seg;
     if (seg == 0x0000 || seg == 0x0004) return 0;       /* empty / runtime bank */
-    *frame = (int)GW(0xDEEE + idx * 4);
+    *frame = (int)g_sprdir[idx].off;
     *bank  = (seg == 0x0003) ? GC.gen                   /* boot-generated décor */
            : (seg == 0x0002) ? GC.nuc                   /* cutscene sheet       */
            : GC.bob;                                    /* main bank            */
     return *bank != NULL;
 }
 
-/* is aDEEE[idx] a runtime-composed shape (bank id 4, game/path_vm.c)? */
+/* is g_sprdir[idx] a runtime-composed shape (bank id 4, game/path_vm.c)? */
 static int dir_is_rt(int idx, int *slot)
 {
-    if (idx < 0 || (u32)(0xDEEE + idx * 4) + 4 > sizeof(struct Globals)) return 0;
-    if (GW(0xDEF0 + idx * 4) != 0x0004) return 0;
-    *slot = (int)GW(0xDEEE + idx * 4);
+    if (idx < 0 || idx >= SPRDIR_MAX) return 0;
+    if (g_sprdir[idx].seg != 0x0004) return 0;
+    *slot = (int)g_sprdir[idx].off;
     return 1;
 }
 
@@ -175,5 +186,5 @@ int ff_dir_sample(int idx, int x, int y)
 
 int ff_dir_count(void)
 {
-    return (int)GW(0xEF52) + g_bank2_n;   /* main count + appended 2nd-bank entries */
+    return (int)Gw_spr_count + g_bank2_n;   /* main count + appended 2nd-bank entries */
 }

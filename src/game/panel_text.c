@@ -6,19 +6,19 @@
  *
  * What it does (verified from code + DGROUP + a DOSBox runtime dump used only for
  * cross-checking — all data here comes from the blob/code, none copied from the dump):
- *   - Messages are ASCII strings in DGROUP, indexed by a far-ptr table @0x352A
- *     (msg[bDE50]).  Each string is text + embedded "01 col row" cursor codes,
- *     terminated by 00.  e.g. msg[0] @0x343D =
+ *   - Messages are real named C strings (ffd_panel_msg[bDE50], src/game/data/ui.c;
+ *     were a far-ptr table of DGROUP offsets @0x352A). Each string is text + embedded
+ *     "01 col row" cursor codes, terminated by 00. e.g. msg[0] BEFORE VISUAL CONTACT =
  *       01 0F 02 "BEFORE" 01 0F 03 "VISUAL" 01 0E 04 "CONTACT." 00
  *     -> BEFORE@(120,16), VISUAL@(120,24), CONTACT.@(112,32).
- *   - State (DGROUP):
- *       bDE50 (bc60)  message index
- *       bDE52 (bc62)  state: 0 idle, >0 start, <0 (0xFF) typing
- *       tDE53 (bc63)  current byte cursor into the message (offset; seg always DGROUP)
- *       wF7B8 (d5c8)  pen X (pixels)        wF7BA (d5ca) pen Y (pixels)
- *   - Per frame (typing): if *cursor==1 -> set pen (col<<3,row<<3), skip 3;
- *     draw ONE glyph at the pen via fn1187_0232 (=ff_font_draw, colour 0), pen X+=8;
- *     if next byte==0 -> done.  On start: load msg ptr, clear 4 rows, pen=(0x68,8).
+ *   - State (gstate.h): Gb_panel_msg (bc60) message index; Gb_panel_state (bc62)
+ *     0 idle / >0 start / <0 (0xFF) typing; Gw_panel_cursor (bc63) = the current
+ *     byte cursor as the original's DGROUP-region OFFSET (kept so the tDE53 trace
+ *     matches the QEMU capture) — resolved against the named ffd_panel_texts array,
+ *     not read from G; Gw_pen_x/y (d5c8/d5ca) pen position in pixels.
+ *   - Per frame (typing): if byte==1 -> set pen (col<<3,row<<3), skip 3; draw ONE
+ *     glyph at the pen via fn1187_0232 (=ff_font_draw, colour 0), pen X+=8; if next
+ *     byte==0 -> done. On start: cursor = the message's start offset, clear 4 rows.
  *   - When bDE50==0 a 5-digit counter (tF6C4>>4) is drawn at (0x78,8).
  *
  * Single-framebuffer adaptation (faithful pixels): the original types ONE glyph per
@@ -28,23 +28,21 @@
  * pixels; consistent with the rest of the chunky port (everything is rebuilt/frame).
  */
 #include "ff_game.h"
-#include "gmem.h"
+#include "gnames.h"
+#include "data/gamedata.h"   /* ffd_panel_texts / ffd_panel_msg / ffd_panel_clear */
 #include "../render/ff_font.h"
 
-/* DGROUP offsets (Ghidra _DAT_2000_XXXX -> real = XXXX+0x21F0; reko names are real) */
-#define O_BC60   0xDE50   /* message index (byte)            */
-#define O_BC62   0xDE52   /* state (signed byte)             */
-#define O_BC63   0xDE53   /* cursor offset (word)            */
-#define O_D5C8   0xF7B8   /* pen X (word)                    */
-#define O_D5CA   0xF7BA   /* pen Y (word)                    */
-#define O_MSGTAB 0x352A   /* far-ptr message table           */
-#define O_CNT    0xF6C4   /* objective distance counter (d4d4, dword) */
-
-/* message[i] offset within DGROUP (segment half is always the DGROUP, ignored) */
-static u16 msg_off(int i) { return GW(O_MSGTAB + (u16)i * 4); }
+/* The typewriter cursor (tDE53) is the original's OFFSET into the panel-text
+ * region (base 0x3409) — reproduced exactly so the state trace matches QEMU —
+ * but resolved against the named ffd_panel_texts array instead of G. */
+#define PANEL_BASE 0x3409
+/* message i's original start offset (was the far-ptr table @0x352A). */
+static int msg_start(int i) { return PANEL_BASE + (int)(ffd_panel_msg[i] - ffd_panel_texts); }
+/* the message byte at region offset `off`. */
+static char panel_byte(int off) { return ffd_panel_texts[off - PANEL_BASE]; }
 
 /* Arm message `idx` (faithful: bDE50=idx, bDE52=1 -> "start" next tick). */
-void panel_text_set(int idx) { GB(O_BC60) = (u8)idx; GB(O_BC62) = 1; }
+void panel_text_set(int idx) { Gb_panel_msg = (u8)idx; Gb_panel_state = 1; }
 
 /* run_level prologue trigger (fn1069_0006 line ~1071): bc60=0, bc62=1. */
 void panel_text_reset(void) { panel_text_set(0); }
@@ -54,30 +52,30 @@ void panel_text_reset(void) { panel_text_set(0); }
  * ITERATION (the demo runs 2 iterations per rendered frame). */
 void panel_text_advance(void)
 {
-    signed char st = (signed char)GB(O_BC62);
+    signed char st = (signed char)Gb_panel_state;
     if (st == 0) return;
     if (st < 0) {                                   /* typing */
-        u16 p = GW(O_BC63);
-        if (GB(p) == 0x01) {                        /* "01 col row" cursor set */
-            GW(O_D5C8) = (u16)((i16)(i8)GB(p + 1) << 3);
-            GW(O_D5CA) = (u16)((i16)(i8)GB(p + 2) << 3);
+        int p = (int)Gw_panel_cursor;               /* region offset */
+        if (panel_byte(p) == 0x01) {                /* "01 col row" cursor set */
+            Gw_pen_x = (u16)((i16)(i8)panel_byte(p + 1) << 3);
+            Gw_pen_y = (u16)((i16)(i8)panel_byte(p + 2) << 3);
             p += 3;
         }
         p += 1;                                     /* consume the glyph byte    */
-        GW(O_BC63) = p;
-        GW(O_D5C8) += 8;
-        if (GB(p) == 0x00) GB(O_BC62) = 0;          /* terminator -> done        */
+        Gw_panel_cursor = (u16)p;
+        Gw_pen_x += 8;
+        if (panel_byte(p) == 0x00) Gb_panel_state = 0;  /* terminator -> done        */
     } else {                                        /* start a new message       */
-        GW(O_BC63) = msg_off(GB(O_BC60));
-        GB(O_BC62) = 0xFF;                          /* -> typing                 */
+        Gw_panel_cursor = (u16)msg_start(Gb_panel_msg); /* -> typing (offset)        */
+        Gb_panel_state = 0xFF;
         /* fn13a8_00a1 start branch: ERASE the old text — draw the 10-space
-         * string @DGROUP 0x38D7 at x=0x68 on rows y=8,16,24,32 (colour 0).
-         * Invisible in run_level (render_frame repaints the HUD after), but
-         * required by round_transition where the HUD page PERSISTS. */
-        for (GW(O_D5CA) = 8; (i16)GW(O_D5CA) < 0x28; GW(O_D5CA) += 8)
-            ff_font_draw((const char *)GPTR(0x38D7), 0x0A, 0x68, (i16)GW(O_D5CA), 0);
-        GW(O_D5CA) = 8;
-        GW(O_D5C8) = 0x68;
+         * eraser at x=0x68 on rows y=8,16,24,32 (colour 0). Invisible in
+         * run_level (render_frame repaints the HUD after), but required by
+         * round_transition where the HUD page PERSISTS. */
+        for (Gw_pen_y = 8; (i16)Gw_pen_y < 0x28; Gw_pen_y += 8)
+            ff_font_draw(ffd_panel_clear, 0x0A, 0x68, (i16)Gw_pen_y, 0);
+        Gw_pen_y = 8;
+        Gw_pen_x = 0x68;
     }
 }
 
@@ -95,22 +93,22 @@ static void draw_decimal(u32 v, int n, int x, int y)
  * already painted this frame). Called ONCE per rendered frame. */
 void panel_text_draw(void)
 {
-    u16 end = GW(O_BC63);
+    int end = (int)Gw_panel_cursor;
     if (end != 0) {            /* a message is loaded — persists after typing done */
-        u16 start = msg_off(GB(O_BC60));
+        int start = msg_start(Gb_panel_msg);
         int x = 0x68, y = 8;
-        for (u16 p = start; p < end; ) {
-            u8 c = GB(p);
+        for (int p = start; p < end; ) {
+            u8 c = (u8)panel_byte(p);
             if (c == 0x00) break;
-            if (c == 0x01) { x = (i8)GB(p + 1) << 3; y = (i8)GB(p + 2) << 3; p += 3; continue; }
+            if (c == 0x01) { x = (i8)panel_byte(p + 1) << 3; y = (i8)panel_byte(p + 2) << 3; p += 3; continue; }
             char ch = (char)c;
             ff_font_draw(&ch, 1, x, y, 0);
             x += 8;
             p += 1;
         }
     }
-    if (GB(O_BC60) == 0)                             /* objective counter         */
-        draw_decimal(GD(O_CNT) >> 4, 5, 0x78, 8);
+    if (Gb_panel_msg == 0)                             /* objective counter         */
+        draw_decimal(Gd_objective >> 4, 5, 0x78, 8);
 }
 
 /* Convenience: advance + draw (single-iteration use). The faithful per-frame path

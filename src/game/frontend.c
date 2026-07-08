@@ -42,7 +42,8 @@
  * faithful part.
  */
 #include "ff_game.h"
-#include "gmem.h"
+#include "gnames.h"
+#include "data/gamedata.h"   /* ffd_txt_* named game strings */
 #include "../render/ff_font.h"
 #include <stdio.h>
 #include <string.h>
@@ -58,7 +59,7 @@ static void fe_timer_frame(void)
 {
     if (++fe_isr18 >= 0x12) {
         fe_isr18 = 0;
-        GI(0x24F1) -= 1;                       /* dec word [24F1] — signed, no clamp */
+        Gi_tick_timer -= 1;                       /* dec word [24F1] — signed, no clamp */
     }
 }
 
@@ -230,7 +231,7 @@ static int fe_show_cpt(const char *name)
 /* credits digit: fn1187_0232(&('0'+tEA3A), 1, 0x128, 0xC0, 3) */
 static void fe_draw_credits_digit(void)
 {
-    char d = (char)('0' + (int)GW(0xEA3A));
+    char d = (char)('0' + (int)Gw_credits);
     ff_font_draw(&d, 0x01, 0x0128, 0xC0, 0x03);
 }
 
@@ -260,11 +261,10 @@ static void fe_text_row(const char *s, int x, int y)
 static void fe_highscore_draw(void)
 {
     fe_show_cpt("HIGHSCOR.CPT");
-    u8 *g = (u8 *)&G;
     int y = 0x6b;
     for (int i = 0; i < 6; ++i) {
-        char *name = (char *)(g + 0x27d9 + i * 0x0e);
-        u32 sc = ((u32)*(u16 *)(g + 0x282f + i * 4) << 16) | *(u16 *)(g + 0x282d + i * 4);
+        char *name = g_high.name[i];
+        u32 sc = ((u32)g_high.score[i].hi << 16) | g_high.score[i].lo;
         for (int d = 6; d >= 0; --d) { name[6 + d] = (char)('0' + (sc % 10)); sc /= 10; }
         fe_text_row(name, 0x60, y);
         y += 0x10;
@@ -275,9 +275,9 @@ static void fe_highscore_draw(void)
 void frontend_title_screen(void)
 {
     fe_show_cpt("TITRE.CPT");                                  /* fn0BA8_0AC5 */
-    ff_font_draw((char *)GPTR(0x3975), 0x10, 0x60, 100,  0x02); /* THE DEATH CONVOY */
-    ff_font_draw((char *)GPTR(0x3986), 0x0A, 0x10, 0xC0, 0x03); /* TITUS 1990       */
-    ff_font_draw((char *)GPTR(0x3991), 0x0A, 0xE0, 0xC0, 0x03); /* CREDITS 00       */
+    ff_font_draw((char *)ffd_txt_deathconvoy, 0x10, 0x60, 100,  0x02); /* THE DEATH CONVOY */
+    ff_font_draw((char *)ffd_txt_titus1990, 0x0A, 0x10, 0xC0, 0x03); /* TITUS 1990       */
+    ff_font_draw((char *)ffd_txt_credits, 0x0A, 0xE0, 0xC0, 0x03); /* CREDITS 00       */
     fe_draw_credits_digit();                                    /* '0'+tEA3A @0x128 */
     /* fn0A0D_07CF(ds, x=8, y=200, idx=0x38) + fn1187_1C73: the © glyph is the
      * display-list sprite aDEEE[0x38] (BOB frame 56, 16x11) drawn with centre-x
@@ -294,9 +294,9 @@ void frontend_title_screen(void)
 static void fe_menu_enter(void)
 {
     frontend_title_screen();                                   /* fn0DAE_0001 */
-    ff_font_draw((char *)GPTR(0x39BA), 0x0C, 0x70, 0xB0, 0x03); /* INSERT COINS */
-    GW(0x27C7) = 0x00;                                          /* level = 0    */
-    GI(0x24F1) = 0x0F;                                          /* 15-tick timeout */
+    ff_font_draw((char *)ffd_txt_insertcoins, 0x0C, 0x70, 0xB0, 0x03); /* INSERT COINS */
+    Gw_stage = 0x00;                                          /* level = 0    */
+    Gi_tick_timer = 0x0F;                                          /* 15-tick timeout */
     fe_di = 0;
 }
 
@@ -304,13 +304,13 @@ static void fe_menu_enter(void)
  * auto-credit; then hand over to the race. */
 static void fe_menu_exit(void)
 {
-    ff_font_draw((char *)GPTR(0x39DC), 0x14, 0x50, 0xB0, 0x03); /* 20 spaces    */
-    GB(0xDC6F) = (GI(0x24F1) == 0x00) ? 0x01 : 0x00;            /* timeout -> DEMO */
+    ff_font_draw((char *)ffd_txt_spaces20, 0x14, 0x50, 0xB0, 0x03); /* 20 spaces    */
+    Gb_demo_flag = (Gi_tick_timer == 0x00) ? 0x01 : 0x00;            /* timeout -> DEMO */
     fe_wipe_black();                    /* fn0DAE_0118 @5396: fn0BA8_1315       */
-    if (GW(0xEA3A) == 0x00) {
-        GW(0xEA3A) = 0x01;                                      /* auto-credit  */
+    if (Gw_credits == 0x00) {
+        Gw_credits = 0x01;                                      /* auto-credit  */
         fe_draw_credits_digit();
-        GI(0x24F1) = 0x01;
+        Gi_tick_timer = 0x01;
         fe_state = FE_MENU_EXIT_WAIT;                           /* while(t24F1); */
         return;
     }
@@ -323,11 +323,11 @@ static void fe_menu_exit(void)
  * ba78=4, 27CB/27C9/27D7/27D5=0). */
 static void fe_start_race(void)
 {
-    GW(0x27D7) = 0x00;                                          /* session best */
-    GW(0x27D5) = 0x00;
-    GB(0xF6B3) = 0x00;
-    GW(0xDC68) = 0x04;                                          /* lives = 4 (fn0DAE_0118 @179) */
-    GW(0x27C9) = 0x00; GW(0x27CB) = 0x00;                       /* score = 0 (fn0DAE_0118 @180-181) */
+    Gw_best_hi = 0x00;                                          /* session best */
+    Gw_best_lo = 0x00;
+    Gb_demo_abort = 0x00;
+    Gw_lives = 0x04;                                          /* lives = 4 (fn0DAE_0118 @179) */
+    Gw_score_lo = 0x00; Gw_score_hi = 0x00;                       /* score = 0 (fn0DAE_0118 @180-181) */
     game_start_level(0);                                        /* fn0DAE_05E2 + run_level init */
     ff_set_palette((const uint8_t (*)[3])GC.pal);               /* race VGA palette */
     /* fn0BA8_1315 wipe-in — transition effect, not ported */
@@ -350,9 +350,9 @@ void frontend_reset(const char *asset_dir)
     fe_stage = 0;
     memset(wp_old, 0, sizeof wp_old);   /* cold boot: wipe in from black */
     memset(fe_old_pal, 0, sizeof fe_old_pal);   /* cold boot: from black */
-    GW(0xEA3A) = 0x00;                 /* no credits at cold boot */
-    GB(0xDC6F) = 0x00;
-    GB(0xF6B3) = 0x00;
+    Gw_credits = 0x00;                 /* no credits at cold boot */
+    Gb_demo_flag = 0x00;
+    Gb_demo_abort = 0x00;
 }
 
 /* One frame of the front-end. Returns 1 while the frontend owns the frame,
@@ -368,8 +368,8 @@ int frontend_frame(void)
      * (aux/start, begin normal play). In headless boot both stay 0 -> the menu
      * times out into the attract demo, unchanged. */
     ff_poll_controls();
-    int fire  = (GW(0x24B7) != 0x00);
-    int start = (GW(0x24B9) != 0x00);
+    int fire  = (Gw_btn_fire != 0x00);
+    int start = (Gw_btn_start != 0x00);
 
     switch (fe_state) {
 
@@ -394,15 +394,15 @@ int frontend_frame(void)
             fe_wipe_black();           /* fn13a8_048a tail @4251: fn0BA8_1315 */
             /* game_main @961-964: tEA3A!=0 -> the CONTINUE screen (fn0DAE_02D0);
              * ==0 -> the highscore path (fn13a8_0e13). */
-            fe_state = (GW(0xEA3A) != 0) ? FE_CONTINUE : FE_GAMEOVER;
+            fe_state = (Gw_credits != 0) ? FE_CONTINUE : FE_GAMEOVER;
         }
         break;
 
     case FE_CONTINUE: {                /* fn0DAE_02D0: CONTINUE? countdown         */
         if (!fe_entered) {
             frontend_title_screen();                            /* fn0DAE_0001     */
-            ff_font_draw((char *)GPTR(0x39F1), 0x0C, 0x70, 0xB0, 0x03); /* CONTINUE//08 */
-            GI(0x24F1) = 0x09;         /* 9-tick (~9 s) countdown; the `while(==9)`
+            ff_font_draw((char *)ffd_txt_continue, 0x0C, 0x70, 0xB0, 0x03); /* CONTINUE//08 */
+            Gi_tick_timer = 0x09;         /* 9-tick (~9 s) countdown; the `while(==9)`
                                         * tick-sync spin is timing-only, dropped   */
             fe_entered = 1;
             fe_wipe_transition();      /* fn0DAE_0001 tail @5300 (param_3=1): to-black + 1325 */
@@ -410,28 +410,28 @@ int frontend_frame(void)
         }
         int done = 0;
         if (fire) done = 1;                                     /* w24B7: CONTINUE */
-        if (GI(0x24F1) < 0) { GW(0xEA3A) = 0x00; done = 1; }    /* expired         */
+        if (Gi_tick_timer < 0) { Gw_credits = 0x00; done = 1; }    /* expired         */
         {                              /* live countdown digit: '0'+t24F1 @ (200,0xB0) */
-            char d = (char)('0' + GI(0x24F1));
+            char d = (char)('0' + Gi_tick_timer);
             ff_font_draw(&d, 0x01, 200, 0xB0, 0x03);
         }
         if (done) {
             fe_entered = 0;
-            if (GW(0xEA3A) != 0) {
+            if (Gw_credits != 0) {
                 /* CONTINUED: session-best 27D5/27D7 (+ HIGH 27CD/27CF) update
                  * (fn0DAE_02D0 tail, 32-bit compares), then game_main @967-969
                  * resets + loop back into run_level on the SAME stage. */
-                if ((i16)GW(0x27D7) <= (i16)GW(0x27CB) &&
-                    ((i16)GW(0x27D7) < (i16)GW(0x27CB) || GW(0x27D5) < GW(0x27C9))) {
-                    GW(0x27D7) = GW(0x27CB); GW(0x27D5) = GW(0x27C9);
-                    if ((i16)GW(0x27CF) <= (i16)GW(0x27CB) &&
-                        ((i16)GW(0x27CF) < (i16)GW(0x27CB) || GW(0x27CD) < GW(0x27C9))) {
-                        GW(0x27CF) = GW(0x27CB); GW(0x27CD) = GW(0x27C9);
+                if ((i16)Gw_best_hi <= (i16)Gw_score_hi &&
+                    ((i16)Gw_best_hi < (i16)Gw_score_hi || Gw_best_lo < Gw_score_lo)) {
+                    Gw_best_hi = Gw_score_hi; Gw_best_lo = Gw_score_lo;
+                    if ((i16)Gw_high_hi <= (i16)Gw_score_hi &&
+                        ((i16)Gw_high_hi < (i16)Gw_score_hi || Gw_high_lo < Gw_score_lo)) {
+                        Gw_high_hi = Gw_score_hi; Gw_high_lo = Gw_score_lo;
                     }
                 }
-                GW(0x27C9) = 0x00; GW(0x27CB) = 0x00;           /* @967-968 score=0 */
-                GW(0xDC68) = 0x04;                              /* @969 lives=4     */
-                game_start_level((int)GW(0x27C7));              /* re-enter the SAME stage */
+                Gw_score_lo = 0x00; Gw_score_hi = 0x00;           /* @967-968 score=0 */
+                Gw_lives = 0x04;                              /* @969 lives=4     */
+                game_start_level((int)Gw_stage);              /* re-enter the SAME stage */
                 /* the to-black runs on the CONTINUE palette (fn0DAE_02D0 @5443);
                  * the race palette (in GC.pal now) is pushed to the DAC on the
                  * black screen at the FE_RACE first-frame reveal — not here. */
@@ -447,62 +447,62 @@ int frontend_frame(void)
 
     case FE_GAMEOVER:                  /* fn13a8_0e13 @4437: GAMEOVER.CPT, t24F1=6 */
         if (!fe_entered) {
-            if (GB(0xF6B3) != 0x00) {  /* 0e13 gate: demo aborted -> skip the screens */
-                GW(0x27C9) = 0x00; GW(0x27CB) = 0x00; GW(0xDC68) = 0x04;
+            if (Gb_demo_abort != 0x00) {  /* 0e13 gate: demo aborted -> skip the screens */
+                Gw_score_lo = 0x00; Gw_score_hi = 0x00; Gw_lives = 0x04;
                 frontend_reenter();
                 break;
             }
             fe_show_cpt("GAMEOVER.CPT");
-            GI(0x24F1) = 0x06;
-            GW(0x27C7) = 0x00;                          /* stage back to 0          */
+            Gi_tick_timer = 0x06;
+            Gw_stage = 0x00;                          /* stage back to 0          */
             {                                           /* fn0DAE_05E2: DECA reload */
                 char cp[360];
                 snprintf(cp, sizeof cp, "%s/cpt", fe_assets);
                 decor_load(cp, 0);
             }
-            GB(0x40A2) = 0x00;
+            Gb_exit_flag = 0x00;
             /* restore the session best into the score (32-bit compare @0e13) */
-            if ((i16)GW(0x27CB) <= (i16)GW(0x27D7) &&
-                ((i16)GW(0x27CB) < (i16)GW(0x27D7) || GW(0x27C9) < GW(0x27D5))) {
-                GW(0x27CB) = GW(0x27D7); GW(0x27C9) = GW(0x27D5);
+            if ((i16)Gw_score_hi <= (i16)Gw_best_hi &&
+                ((i16)Gw_score_hi < (i16)Gw_best_hi || Gw_score_lo < Gw_best_lo)) {
+                Gw_score_hi = Gw_best_hi; Gw_score_lo = Gw_best_lo;
             }
-            /* find the table slot: first entry with score <= ours (282D/282F) */
+            /* find the table slot: first entry with score <= ours */
             {
-                u8 *g = (u8 *)&G;
                 int i;
                 for (i = 0; i < 6; ++i) {
-                    u16 thi = *(u16 *)(g + 0x282F + i * 4), tlo = *(u16 *)(g + 0x282D + i * 4);
-                    if ((i16)thi <= (i16)GW(0x27CB) &&
-                        ((i16)thi < (i16)GW(0x27CB) || tlo <= GW(0x27C9))) break;
+                    u16 thi = g_high.score[i].hi, tlo = g_high.score[i].lo;
+                    if ((i16)thi <= (i16)Gw_score_hi &&
+                        ((i16)thi < (i16)Gw_score_hi || tlo <= Gw_score_lo)) break;
                 }
                 ne_slot = i;
                 if (i < 6) {                            /* shift down + insert      */
                     for (int k = 5; k > i; --k) {
-                        *(u16 *)(g + 0x282F + k * 4) = *(u16 *)(g + 0x282F + (k - 1) * 4);
-                        *(u16 *)(g + 0x282D + k * 4) = *(u16 *)(g + 0x282D + (k - 1) * 4);
+                        g_high.score[k] = g_high.score[k - 1];
                         for (int c = 2; c < 5; ++c)     /* the 3 name chars         */
-                            g[0x27D9 + k * 0x0E + c] = g[0x27D9 + (k - 1) * 0x0E + c];
+                            g_high.name[k][c] = g_high.name[k - 1][c];
                     }
-                    *(u16 *)(g + 0x282F + i * 4) = GW(0x27CB);
-                    *(u16 *)(g + 0x282D + i * 4) = GW(0x27C9);
-                    for (int c = 2; c < 5; ++c) g[0x27D9 + i * 0x0E + c] = ' ';
+                    g_high.score[i].hi = Gw_score_hi;
+                    g_high.score[i].lo = Gw_score_lo;
+                    for (int c = 2; c < 5; ++c) g_high.name[i][c] = ' ';
                 }
             }
             fe_entered = 1;
             fe_wipe_transition();      /* fn13a8_0e13 @4438 (param_3=1): to-black + 1325 */
             break;
         }
-        if (fire) GI(0x24F1) = 0x00;
-        if (GI(0x24F1) <= 0x00) { fe_entered = 0; fe_state = FE_HIGHSCORE; }
+        if (fire) Gi_tick_timer = 0x00;
+        if (Gi_tick_timer <= 0x00) { fe_entered = 0; fe_state = FE_HIGHSCORE; }
         break;
 
     case FE_HIGHSCORE: {               /* fn13a8_0e13 @4478: HIGHSCOR.CPT + table, t24F1=0x1e */
-        u8 *g = (u8 *)&G;
-        char *nm = (char *)(g + 0x27D9 + ne_slot * 0x0E);   /* the new entry's row */
+        char *nm = g_high.name[ne_slot < 6 ? ne_slot : 5];  /* the new entry's row
+                                                             * (slot 6 = "did not
+                                                             * qualify": row unused,
+                                                             * entry disabled) */
         int boxy = ne_slot * 0x10;                          /* iVar4               */
         if (!fe_entered) {
             fe_highscore_draw();
-            GI(0x24F1) = 0x1E;
+            Gi_tick_timer = 0x1E;
             if (ne_slot < 6) {          /* highlight box behind the new row (fill_rects) */
                 for (int y = boxy + 0x5E; y <= boxy + 0x6C; ++y)
                     for (int x = 0x76; x <= 0xA9; ++x) ff_fb[(long)y * FF_W + x] = 0;
@@ -522,15 +522,15 @@ int frontend_frame(void)
          * Keys: UP (w24BB) prev letter, DOWN (w24BD) next, LEFT (w24C1) backspace,
          * FIRE (w24B7) or RIGHT (w24BF) accept; timeout t24F1 (0x1E ticks).        */
         int exit_hs = 0;
-        if (GW(0x24C1) != 0 && ne_pos != 0 && ne_rep == 0) {   /* LEFT: backspace   */
+        if (Gw_btn_left != 0 && ne_pos != 0 && ne_rep == 0) {   /* LEFT: backspace   */
             nm[2 + ne_pos] = '#';
             ne_pos -= 1;
             ne_rep = ne_rel; ne_rel = 1; ne_ctr = 0;
         }
         if (ne_pos < 3) {
-            if (GW(0x24BB) == 0) {
-                if (GW(0x24BD) == 0) {
-                    if (GW(0x24C1) == 0) { ne_rep = 0; ne_rel = 9; }
+            if (Gw_btn_accel == 0) {
+                if (Gw_btn_brake == 0) {
+                    if (Gw_btn_left == 0) { ne_rep = 0; ne_rel = 9; }
                 } else if (ne_rep == 0) {                      /* DOWN: next letter */
                     ne_let = (ne_let == 25) ? 0 : ne_let + 1;
                     ne_rep = ne_rel; ne_rel = 1; ne_ctr = 0;
@@ -549,7 +549,7 @@ int frontend_frame(void)
              * after acting (a blocking release wait), so a held key acts ONCE.
              * Frame model: act on the RISING edge only. */
             static int ne_acc_prev;
-            int acc = (fire || GW(0x24BF) != 0);
+            int acc = (fire || Gw_btn_right != 0);
             if (acc && !ne_acc_prev) {
                 ne_rep = 1;
                 if (ne_pos == 3) exit_hs = 1;
@@ -561,13 +561,13 @@ int frontend_frame(void)
             if (ne_rep == 0) {
                 nm[2 + ne_pos] = (char)((ne_ctr & 8) ? 'A' + ne_let : '#');  /* blink */
             } else {
-                GI(0x24F1) = 0x1E;      /* activity resets the timeout               */
+                Gi_tick_timer = 0x1E;      /* activity resets the timeout               */
                 nm[2 + ne_pos] = (char)('A' + ne_let);
             }
             if ((i8)ne_rep < (i8)ne_ctr) ne_rep = 0;           /* repeat delay over  */
         }
         if (ne_slot < 6) fe_text_row(nm, 0x60, boxy + 0x6B);   /* redraw the row     */
-        if (GI(0x24F1) < 0 || GB(0x40A2) != 0) {               /* timeout            */
+        if (Gi_tick_timer < 0 || Gb_exit_flag != 0) {               /* timeout            */
             exit_hs = 1;
             if (ne_pos < 3) nm[2 + ne_pos] = ' ';
         }
@@ -579,14 +579,14 @@ int frontend_frame(void)
                     if (nm[c] == '#') nm[c] = ' ';
                 ff_save_high(fe_assets);
             }
-            if ((i16)GW(0x27CF) <= (i16)GW(0x27CB) &&          /* HIGH display update */
-                ((i16)GW(0x27CF) < (i16)GW(0x27CB) || GW(0x27CD) < GW(0x27C9))) {
-                GW(0x27CF) = GW(0x27CB); GW(0x27CD) = GW(0x27C9);
+            if ((i16)Gw_high_hi <= (i16)Gw_score_hi &&          /* HIGH display update */
+                ((i16)Gw_high_hi < (i16)Gw_score_hi || Gw_high_lo < Gw_score_lo)) {
+                Gw_high_hi = Gw_score_hi; Gw_high_lo = Gw_score_lo;
             }
             ne_slot = 6; ne_pos = 3;
             /* game_main @967-969, AFTER the highscore path: score = 0, lives = 4. */
-            GW(0x27C9) = 0x00; GW(0x27CB) = 0x00;
-            GW(0xDC68) = 0x04;
+            Gw_score_lo = 0x00; Gw_score_hi = 0x00;
+            Gw_lives = 0x04;
             frontend_reenter();
         }
         break;
@@ -596,13 +596,13 @@ int frontend_frame(void)
         static const char *names[3] = { "DROGUE.CPT", "TITUS.CPT", "PRES.CPT" };
         if (!fe_entered) {
             fe_show_cpt(names[fe_sub]);
-            GI(0x24F1) = 0x05;         /* fn0DAE_00D5: 5 ticks or input */
+            Gi_tick_timer = 0x05;         /* fn0DAE_00D5: 5 ticks or input */
             fe_entered = 1;
             fe_wipe_transition();      /* fn0DAE_00D5 @5313 (param_3=1): to-black + 1325 */
             break;
         }
-        if (fire) GI(0x24F1) = 0x00;   /* w24B7 || t24B9 -> skip */
-        if (GI(0x24F1) == 0x00) {
+        if (fire) Gi_tick_timer = 0x00;   /* w24B7 || t24B9 -> skip */
+        if (Gi_tick_timer == 0x00) {
             fe_entered = 0;
             if (++fe_sub >= 3) { fe_state = FE_MENU; }
         }
@@ -613,16 +613,16 @@ int frontend_frame(void)
         if (!fe_entered) { fe_menu_enter(); fe_entered = 1; fe_wipe_transition(); break; }
 
         if (fe_di == 0) {              /* iVar3 state machine */
-            if (GW(0xEA3A) != 0x00) fe_di = 1;
+            if (Gw_credits != 0x00) fe_di = 1;
         } else if (fe_di == 1) {
-            ff_font_draw((char *)GPTR(0x39C7), 0x14, 0x50, 0xB0, 0x03); /* PRESS BUTTON TO PLAY */
+            ff_font_draw((char *)ffd_txt_pressbutton, 0x14, 0x50, 0xB0, 0x03); /* PRESS BUTTON TO PLAY */
             fe_di = 2;
         }
 
         if (fire) {                    /* w24B7: insert credit / start */
-            GI(0x24F1) = 0x0A;
-            if (GW(0xEA3A) < 0x03) {
-                GW(0xEA3A) = (u16)(GW(0xEA3A) + 1);
+            Gi_tick_timer = 0x0A;
+            if (Gw_credits < 0x03) {
+                Gw_credits = (u16)(Gw_credits + 1);
                 fe_draw_credits_digit();
                 fe_state = FE_MENU_RELEASE;      /* while (w24B7) poll; */
             } else {
@@ -634,7 +634,7 @@ int frontend_frame(void)
         /* fn0DAE_0118 @146: aux/start (t24B9) OR timeout -> exit the menu loop.
          * fe_menu_exit sets bDC6F = (t24F1==0), so a real START keeps bDC6F=0
          * (a human plays level 1); only a timeout arms the attract DEMO. */
-        if (start || GI(0x24F1) == 0x00) {
+        if (start || Gi_tick_timer == 0x00) {
             fe_entered = 0;
             fe_menu_exit();
         }
@@ -645,7 +645,7 @@ int frontend_frame(void)
         break;
 
     case FE_MENU_EXIT_WAIT:            /* t24F1=1; while (t24F1 != 0) ; */
-        if (GI(0x24F1) <= 0x00) fe_state = FE_RACE;
+        if (Gi_tick_timer <= 0x00) fe_state = FE_RACE;
         break;
 
     case FE_RACE:
@@ -680,7 +680,7 @@ void frontend_reenter(void)
     fe_sub = 0;
     fe_race_started = 0;
     fe_start_done = 0;
-    fe_state = (GB(0xDC6F) != 0x00 && GB(0xF6B3) == 0x00) ? FE_DEMO_SCREENS
+    fe_state = (Gb_demo_flag != 0x00 && Gb_demo_abort == 0x00) ? FE_DEMO_SCREENS
                                                           : FE_MENU;
 }
 
@@ -701,17 +701,17 @@ void frontend_reenter(void)
  * to continue to the next stage, 0 when the game is complete (stages wrapped to 0). */
 int frontend_stage_advance(void)
 {
-    GI(0x24F1) = 0x14;                                    /* t24F1 = 20 (interlude hold) */
-    GW(0x27C7) = (u16)(GW(0x27C7) + GB(0xDC6E));          /* t27C7 += anim_step -> stage++ */
+    Gi_tick_timer = 0x14;                                    /* t24F1 = 20 (interlude hold) */
+    Gw_stage = (u16)(Gw_stage + Gb_stage_clear);          /* t27C7 += anim_step -> stage++ */
     int cont = 1;
-    if (GW(0x27C7) == 0x05) {                             /* all 5 stages cleared */
-        GW(0x27C7) = 0x00;
+    if (Gw_stage == 0x05) {                             /* all 5 stages cleared */
+        Gw_stage = 0x00;
         fe_show_cpt("CONG.CPT");                          /* fn13a8_0ac5 CONG.CPT */
         cont = 0;
     } else {
         fe_show_cpt("ETAPE.CPT");                         /* fn13a8_0ac5 ETAPE.CPT (sets the ETAPE palette) */
-        fe_text_row((char *)GPTR(0x3A11), 0x50, 0x23);    /* "YOU GOT ME"        */
-        fe_text_row((char *)GPTR(0x3A1C), 0x20, 0xBA);    /* "BUT I AM NOT DEAD" */
+        fe_text_row((char *)ffd_txt_yougotme, 0x50, 0x23);    /* "YOU GOT ME"        */
+        fe_text_row((char *)ffd_txt_notdead, 0x20, 0xBA);    /* "BUT I AM NOT DEAD" */
         /* fn0DAE_05E2 setup_level_background: reload the new stage's roadside décor
          * (DEC<'A'+level>.CPT). NOTE: run_level_init (which rebuilds the GAMEPLAY
          * palette + resets the race) is DEFERRED to the caller, run AFTER the
@@ -720,7 +720,7 @@ int frontend_stage_advance(void)
          * active for the interlude screen (the palette fix). */
         char cp[360];
         snprintf(cp, sizeof cp, "%s/cpt", fe_assets);
-        decor_load(cp, (int)GW(0x27C7));
+        decor_load(cp, (int)Gw_stage);
     }
     fe_wipe_transition();   /* fn0DAE_03AA @5466: fn13a8_0AC5 (param_3=1) to-black on
                              * the last-race palette -> ETAPE palette -> 1325 reveal;
@@ -747,7 +747,7 @@ int frontend_wipe_frame(void)
  * follow-up visual layer; the LOOP itself is faithful here. */
 void frontend_post_race(void)
 {
-    if ((i16)GW(0xEA3A) != 0) GW(0xEA3A) = (u16)(GW(0xEA3A) - 1);  /* c84a-- (@959) */
+    if ((i16)Gw_credits != 0) Gw_credits = (u16)(Gw_credits - 1);  /* c84a-- (@959) */
     /* game_main death branch order (@960-969): FUN_13a8_048a (round_transition —
      * the NUC cutscene, PORTED in game/cutscene.c; skipped when bF6B3 set) ->
      * FUN_13a8_0e13 (GAME OVER -> HIGH SCORE) -> score=0/lives=4 -> the menu.

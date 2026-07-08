@@ -4,25 +4,84 @@
  * entry. (The old shell-era weak fallbacks and game_frame() were dead code —
  * every subsystem has its faithful strong definition — and were removed.) */
 #include "ff_game.h"
+#include "gnames.h"
 #include "../render/ff_font.h"
+#include "data/wave_data.h"
+#include "data/gamedata.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 
 GameCtx GC;
 
-/* ---- entity pool base (the 20-slot pool lives in DGROUP @ DG_ENTITIES) ---- */
-Entity *entity_pool(void) { return (Entity *)((uint8_t *)&G + DG_ENTITIES); }
+/* ---- THE ENTITY POOL (de-DGROUP'd) ----------------------------------------
+ * A real typed block instead of the DGROUP byte region @0xE5CC: 20 packed
+ * Entity slots (0x33 bytes each, layout asserted in ff2_types.h). Static
+ * storage = zeroed at start, exactly like the original pool inside the
+ * zero-initialised data segment. */
+Entity g_pool[ENTITY_POOL_SLOTS];
+Entity *entity_pool(void) { return g_pool; }
+
+/* THE ENEMY-PROTOTYPE POOL (de-DGROUP'd): was the 81 x 0x33 region @0x1490.
+ * MUTABLE: the path VM records each type's runtime shape base at +0x1B. */
+Entity g_protos[81];
 
 /* ---- lifecycle ---- */
+/* Reset every runtime STATE BLOCK to its cold-boot value and seed the
+ * data-initialised blocks from the typed SOURCE tables (game/data/*.c).
+ * THE DGROUP EMULATION IS OVER: there is no G image — the wave bytecode is
+ * executed from its const array (wave_data.c <- wave/levels.wave), every
+ * other content table is read as named ffd_* data, and all mutable state
+ * lives in the semantic blocks (gstate.h / the g_* arrays). */
+void ff_apply_data_tables(void) {
+    /* zero the state blocks (== the original's zero-initialised data segment;
+     * boot-time call only) */
+    memset(g_pool, 0, sizeof g_pool);
+    memset(&g_race, 0, sizeof g_race);
+    memset(&g_score, 0, sizeof g_score);
+    memset(&g_panel, 0, sizeof g_panel);
+    memset(&g_in, 0, sizeof g_in);
+    memset(&g_tim, 0, sizeof g_tim);
+    memset(&g_hud_st, 0, sizeof g_hud_st);
+    memset(&g_vm, 0, sizeof g_vm);
+    memset(&g_decor_st, 0, sizeof g_decor_st);
+    /* data-seeded MUTABLE blocks: */
+    memcpy(g_particles, ffd_particle_init, sizeof g_particles);   /* @0x35CA */
+    /* the coord-table seeds (@0x2C49): the first 4 words precede the table
+     * (no reader); the tail seeds the 0x84-byte table exactly. Rebuilt by
+     * fn0869_15D6 before any read — kept for byte-faithful cold state. */
+    memcpy(&g_road, (const u8 *)ffd_road_coord_seeds + 8, sizeof g_road);
+    /* the mutable enemy-prototype pool (was @0x1490) */
+    memcpy(g_protos, ffd_enemy_protos, sizeof g_protos);
+    /* the composer mip list (was @0x3837) */
+    memcpy(g_miplist, ffd_miplist_init, sizeof g_miplist);
+    /* the flat track image (was @0x31DD..0x3408; render_world.c) */
+    track_seed();
+    /* the mutable morph-script bank (below) + the high-score defaults (the
+     * HIGH file overwrites them at boot via ff_load_high) */
+    memcpy(g_high.name, ffd_high_names, sizeof g_high.name);
+    memcpy(g_high.score, ffd_high_scores, sizeof g_high.score);
+    /* the mutable morph-script bank (was @0x11F8..0x1460): the 13 scripts
+     * land at their original relative positions inside the bank. */
+    {
+        static const struct { u16 off, len; const MorphEnt *src; } ms[13] = {
+            { 0x11F8, 0x30, ffd_morph_11f8 }, { 0x1228, 0x30, ffd_morph_1228 },
+            { 0x1258, 0x30, ffd_morph_1258 }, { 0x1288, 0x1C, ffd_morph_1288 },
+            { 0x12A4, 0x1C, ffd_morph_12a4 }, { 0x12C0, 0x34, ffd_morph_12c0 },
+            { 0x12F4, 0x34, ffd_morph_12f4 }, { 0x1328, 0x34, ffd_morph_1328 },
+            { 0x135C, 0x34, ffd_morph_135c }, { 0x1390, 0x34, ffd_morph_1390 },
+            { 0x13C4, 0x34, ffd_morph_13c4 }, { 0x13F8, 0x34, ffd_morph_13f8 },
+            { 0x142C, 0x34, ffd_morph_142c },
+        };
+        for (int m = 0; m < 13; m++)
+            memcpy((u8 *)g_morph + (ms[m].off - MORPH_BASE), ms[m].src, ms[m].len);
+    }
+}
+
 int game_init(const char *asset_dir) {
     char p[320];
-    snprintf(p, sizeof p, "%s/dgroup.bin", asset_dir);
-    if (ff_load_dgroup(p) != 0) {
-        /* dgroup.bin may live next to the EXE assets; try assets/ too */
-        if (ff_load_dgroup("assets/dgroup.bin") != 0)
-            fprintf(stderr, "warning: no dgroup.bin (%s)\n", p);
-    }
+    ff_apply_data_tables();
+
     snprintf(p, sizeof p, "%s/cpt/BOB.CPT", asset_dir);
     GC.bob = ff_bob_load(p);
     if (!GC.bob) fprintf(stderr, "warning: BOB load failed (%s)\n", p);
@@ -81,7 +140,7 @@ int game_init(const char *asset_dir) {
      * The cloud band accumulators c850..c858 (0xEA40..) stay BSS-zero here (the
      * fn13a8_01c9 zero loop @3783 has a `5 < iVar3` guard that never runs) and also
      * persist. Doing these per-race (as run_level_init used to) desynced cycle 2. */
-    *(u16 *)((u8 *)&G + 0xEF50) = 0xA0;
+    Gw_mtn_scroll = 0xA0;
 
     /* fn13a8_12f4 (called from fn13a8_01c9, boot): LOAD the real high-score table
      * from the HIGH file. The DGROUP blob only holds placeholder defaults
@@ -93,36 +152,34 @@ int game_init(const char *asset_dir) {
 }
 
 /* fn13a8_12f4 highscore_load (@13a8:12f4). Faithful port: read the HIGH file
- * (108 bytes = 6 names @0x27d9 [14B each] + 6 scores @0x282d [32-bit lo/hi]) into
- * the DGROUP score table via the file loader fn120d_0394, then set the in-race
- * HIGH display 27cd/27cf = the #1 entry's score (282d/282f). The scores are NOT
- * in the static DGROUP blob (rule #5: the table is filled at runtime from the
- * file); this replaces the earlier hardcoded 27cd. */
+ * (108 bytes = 6 names + 6 32-bit scores, exactly the g_high image) via the
+ * file loader fn120d_0394, then set the in-race HIGH display = the #1 entry's
+ * score. The scores are NOT in the static data (rule #5: the table is filled
+ * at runtime from the file); the g_high defaults are placeholders. */
 void ff_load_high(const char *asset_dir) {
     char p[320];
-    u8 *g = (u8 *)&G;
     snprintf(p, sizeof p, "%s/HIGH", asset_dir);
     FILE *f = fopen(p, "rb");
     if (f) {
-        if (fread(g + 0x27d9, 1, 0x6c, f) != 0x6c)   /* fn120d_0394: 108 B -> 0x27d9 */
+        if (fread(&g_high, 1, 0x6c, f) != 0x6c)     /* fn120d_0394: 108 B image */
             fprintf(stderr, "warning: short HIGH read (%s)\n", p);
         fclose(f);
     } else {
-        fprintf(stderr, "warning: no HIGH file (%s) — using DGROUP defaults\n", p);
+        fprintf(stderr, "warning: no HIGH file (%s) — using the data defaults\n", p);
     }
-    *(u16 *)(g + 0x27CF) = *(u16 *)(g + 0x282F);      /* race HIGH = table[0].score */
-    *(u16 *)(g + 0x27CD) = *(u16 *)(g + 0x282D);
+    Gw_high_hi = g_high.score[0].hi;                /* race HIGH = table[0].score */
+    Gw_high_lo = g_high.score[0].lo;
 }
 
-/* fn13a8_0e13 tail (fn0A0D_0483 with the name @0x3906 "HIGH"): WRITE the
- * high-score table back to the HIGH file — 0x6C bytes (6 rows of 14 name chars
- * @0x27D9 + 6 32-bit scores @0x282D) after a name entry completes. */
+/* fn13a8_0e13 tail (fn0A0D_0483 with the name "HIGH"): WRITE the high-score
+ * table back to the HIGH file — the 0x6C-byte g_high image — after a name
+ * entry completes. */
 void ff_save_high(const char *asset_dir) {
     char p[320];
     snprintf(p, sizeof p, "%s/HIGH", asset_dir);
     FILE *f = fopen(p, "wb");
     if (!f) { fprintf(stderr, "warning: cannot write HIGH (%s)\n", p); return; }
-    fwrite((u8 *)&G + 0x27D9, 1, 0x6C, f);
+    fwrite(&g_high, 1, 0x6C, f);
     fclose(f);
 }
 

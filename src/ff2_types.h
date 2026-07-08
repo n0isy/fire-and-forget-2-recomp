@@ -157,6 +157,13 @@ enum EnemyType {
 /* ================================================================== */
 #pragma pack(push, 1)
 
+/* small shared data shapes (used by both the typed CONTENT tables in
+ * src/game/data/ and the de-DGROUP'd runtime blocks) */
+typedef struct { u16 off, seg; } FarPtr;            /* 16-bit far seg:off pair  */
+typedef struct { i16 thresh, sprite; } MorphEnt;    /* morph-script LOD entry   */
+typedef struct { i16 kind, side, phase; FarPtr morph; } DecorProto;  /* décor
+                 * prototype AND the live aDDEC ring-entry layout (10 bytes) */
+
 /* ------------------------------------------------------------------ */
 /* Entity — entity pool slot (0x33 = 51 bytes), docs/entities.md       */
 /* Pool: 20 slots x 0x33 @ Globals 0xE5CC. b0000<0 -> slot is free.   */
@@ -317,20 +324,7 @@ _Static_assert(sizeof(Particle) == 10, "Particle must be 10 bytes");
 
 #pragma pack(pop)
 
-/* ------------------------------------------------------------------ */
-/* VmState — Level Script-VM state (docs/script_vm.md).               */
-/* NOT memory-mapped: the real fields are scattered across DGROUP     */
-/* globals (see comments). Logical aggregation for the port.          */
-/* ------------------------------------------------------------------ */
-typedef struct {
-    farptr_t pc;          /* PC, far pointer: off=tF6BA, seg=ptrF6BC */
-    farptr_t return_ptr;  /* GOSUB return (1 level): off=ptrF7C6, seg=ptrF7C8 */
-    u16      getchar_idx;  /* wF7C4 — GETCHAR marker counter */
-    u16      path_toggle;  /* wF7C2 — rearm path toggle */
-    u16      path_resync;  /* wF7C0 — path-VM resync flag */
-    u16      active_cap;    /* tF6B8 — active spawn cap */
-    u8       wave_count;    /* bF7CA — WAVE counter latch */
-    u8       phase;         /* b38A6 — PUT/WAVE phase (0..2) */
-} VmState;
+/* (the old speculative "VmState logical aggregation" typedef is gone: the
+ *  REAL de-DGROUP'd VM state struct lives in game/gstate.h) */
 
 #endif /* FF2_TYPES_H */

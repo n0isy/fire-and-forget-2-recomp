@@ -1,16 +1,14 @@
 #ifndef FF2_TABLES_H
 #define FF2_TABLES_H
-/* ff2_tables.h — static DGROUP tables and numeric constants (Fire & Forget II).
+/* ff2_tables.h — the ORIGINAL DGROUP LAYOUT REFERENCE + numeric constants.
  *
  * Data sources: docs/sound_format.md, docs/entities.md, meta/enemy_types.csv,
  * docs/script_vm.md, docs/bob_format.md, docs/asset_pipeline.md, intermediate/globals_structs.md.
  *
- * All offsets are DGROUP-relative (Reko `ds:` offset). The whole DGROUP is loaded into
- * `struct Globals G` (declared in ff2_globals.h) as a byte-exact blob of the 16-bit image,
- * so the tables are accessed via `(type*)((u8*)&G + DG_xxx ...)` accessors.
- *
- * Include order: platform.h -> ff2_types.h -> ff2_globals.h -> ff2_tables.h -> ...
- * (accessors use `G` from ff2_globals.h; they expand only at the call sites.)
+ * All DG_* offsets are DGROUP-relative (Reko `ds:` offsets) — HISTORICAL: the
+ * port no longer keeps a DGROUP image (fully de-DGROUP'd); these constants
+ * document where each table lived, for cross-referencing the decompile, the
+ * QEMU captures and the future SOUND port (assets/dgroup.bin).
  */
 #include "ff2_types.h"
 
@@ -29,7 +27,8 @@
 #define DG_ENEMY_NAMES       0x0CB2  /* enemy names: 81 fixed-width 8-byte strings          */
 #define DG_ENEMY_PROTOS      0x1490  /* slot templates: 81 records of 0x33 bytes            */
 #define DG_BEHAVIOR_TBL      0x3A63  /* a3A63: 81 far pointers (stride 4) to seg 161c handlers */
-#define DG_ENTITIES          0xE5CC  /* pool of active entities: 20 slots of 0x33           */
+#define DG_ENTITIES          0xE5CC  /* ORIGINAL pool offset (historical; the live pool is
+                                        the typed g_pool block outside G — ff_game.h)      */
 #define DG_ENEMY_RING        0x33D2  /* enemy_list: ring buffer of enemy pointers           */
 
 /* --- Engine lookup tables (intermediate/globals_structs.md) --- */
@@ -107,35 +106,16 @@
 extern const char *const ff_asset_names[NUM_ASSETS];
 
 /* =========================================================================
- * 4. Accessors to tables inside the G blob (struct Globals G — from ff2_globals.h)
+ * 4. Accessors — GONE with the DGROUP image
  * =========================================================================
- * All DGROUP tables are read as `(type*)((u8*)&G + DG_xxx + index*stride)`.
+ * The G blob no longer exists: every table above is either read directly as
+ * named ffd_* data (src/game/data/), executed from its const array (the wave
+ * bytecode), or lives in a typed runtime block (gstate.h / game/ff_game.h).
+ * The DG_* offsets above are kept as the ORIGINAL LAYOUT REFERENCE for
+ * cross-checking the decompile and the QEMU captures — and for the SOUND
+ * port, whose DGROUP data (the SONG/OPL/SFX offsets) still lives in
+ * assets/dgroup.bin awaiting extraction.
  */
-
-/* --- Lookup tables --- */
-#define FNUM(i)        (*(u16*)((u8*)&G + DG_ADLIB_FNUM  + (i)*2))   /* F-number of semitone i   */
-#define SINE(i)        (*(i16*)((u8*)&G + DG_SINE        + (i)*2))   /* sine_table[i] (signed)   */
-#define SPEED(i)       (*(u16*)((u8*)&G + DG_SPEED_TBL   + (i)*2))   /* speed_table[i]           */
-#define RAMP(i)        (*(u16*)((u8*)&G + DG_RAMP_TBL    + (i)*2))   /* ramp_table[i] (= i+1)    */
-#define COORD(i)       (*(i16*)((u8*)&G + DG_COORD_TBL   + (i)*2))   /* coord_table[i]           */
-
-/* --- Script-VM --- */
-#define SCRIPT_DIR(i)  (*(u16*)((u8*)&G + DG_SCRIPT_DIR  + (i)*2))   /* start of script i (rel. to bytecode) */
-#define BYTECODE_AT(o) ((u8*)&G + DG_BYTECODE + (o))                 /* bytecode at offset o     */
-
-/* --- Enemies / entities --- */
-#define BEHAVIOR_PTR(i) (*(farptr_t*)((u8*)&G + DG_BEHAVIOR_TBL + (i)*4))      /* far pointer to handler of type i */
-#define ENEMY_NAME(i)   ((const char*)((u8*)&G + DG_ENEMY_NAMES + (i)*ENEMY_NAME_LEN)) /* fixed-8 name */
-#define ENEMY_PROTO(i)  ((u8*)&G + DG_ENEMY_PROTOS + (i)*ENEMY_PROTO_STRIDE)   /* slot template of type i */
-#define ENTITY_SLOT(i)  ((u8*)&G + DG_ENTITIES     + (i)*ENTITY_SLOT_SIZE)     /* active slot i          */
-
-/* --- Sound --- */
-#define SONG_DIR(i)        (*(u16*)((u8*)&G + DG_SONG_DIR        + (i)*2))     /* stream offset of voice i */
-#define INSTR_PTR(i)       (*(u16*)((u8*)&G + DG_INSTR_PTRS      + (i)*2))     /* ptr to patch record i  */
-#define SONG_CMD_PTR(i)    (*(farptr_t*)((u8*)&G + DG_SONG_CMD_TBL    + (i)*4))/* handler of command i   */
-#define SONG_EXTCMD_PTR(i) (*(farptr_t*)((u8*)&G + DG_SONG_EXTCMD_TBL + (i)*4))/* handler of ext command i */
-#define OPL_CHAN_CELL(i)   (*(u8*)((u8*)&G + DG_OPL_CHAN_CELL + (i)))          /* channel -> cell        */
-#define OPL_CELL_REG(i)    (*(u8*)((u8*)&G + DG_OPL_CELL_REG  + (i)))          /* cell -> reg-offset     */
 
 /* =========================================================================
  * 5. Canonical reference F-number table (to cross-check against FNUM())

@@ -48,27 +48,50 @@
 #include <stdlib.h>
 
 #include "../ff2.h"     /* platform (ff_fb, FF_W, FF_H), globals, types */
-#include "gmem.h"       /* GB/GW/GI/GPTR raw DGROUP access */
+#include "gnames.h"     /* semantic names of the scalar state fields */
+#include "ff_game.h"    /* g_persp_scale/g_persp_halfw runtime LUT blocks */
+#include "data/gamedata.h"   /* ffd_track_* / ffd_persp_ramp */
 
 /* parallax background layers (game/bg_layers.c), drawn between fill and road */
 void draw_clouds(void);
 void draw_mountains(void);
 
 /* ---- road track curve data (the level's curve profile) ------------------- *
- * fn0869_15D6 reads the per-band curve through ds->tF6CD = ptr33D2[0].  The
- * pointer segment (0de1) IS the DGROUP, so the curve bytes live in the blob:
- * the track segment at DGROUP 0x31DD is [0,0,...,0x7F] — zero curvature (straight
- * road) terminated by the 0x7F segment-end marker fn0869_154D scans for.  tF6CD
- * walks the blob one byte per fn0869_154D step; the road reads curve[tF6CD+0..14]
- * as the 15 bands' signed curvature.  (Earlier mis-read this from the EXE.)     */
-static int g_tF6CD = 0x31DD;              /* DGROUP offset of the curve pointer */
+ * fn0869_15D6 reads the per-band curve through ds->tF6CD = ptr33D2[0]. The
+ * curve bytes are the ffd_track_* data (7 contiguous 0x7F-terminated segments
+ * + the FarPtr[12] segment table + the 7-byte tail), assembled at boot into
+ * the flat g_track image so the ORIGINAL offset walk (tF6CD one byte per
+ * fn0869_154D step, curve[tF6CD+0..14] per band, segment jumps through the
+ * table) runs unchanged — only the fetch is redirected out of G. */
+#define TRACK_BASE 0x31DD                /* the region's original DGROUP home */
+#define TRACK_LEN  (0x3409 - 0x31DD)     /* segments + seg-ptr table + tail   */
+static u8 g_track[TRACK_LEN];
+static u8  trk_b(int off) { return g_track[off - TRACK_BASE]; }
+static u16 trk_w(int off) { return (u16)(trk_b(off) | ((u16)trk_b(off + 1) << 8)); }
+static u32 trk_d(int off) { return (u32)trk_w(off) | ((u32)trk_w(off + 2) << 16); }
+
+/* assemble the flat track image from the named data (boot; game_main.c) */
+void track_seed(void)
+{
+    static const struct { u16 off, len; const void *src; } ts[9] = {
+        { 0x31DD, 0x21, ffd_track_31dd }, { 0x31FE, 0x30, ffd_track_31fe },
+        { 0x322E, 0x4E, ffd_track_322e }, { 0x327C, 0x6C, ffd_track_327c },
+        { 0x32E8, 0x30, ffd_track_32e8 }, { 0x3318, 0x4E, ffd_track_3318 },
+        { 0x3366, 0x6C, ffd_track_3366 }, { 0x33D2, 0x30, ffd_track_seg_ptrs },
+        { 0x3402, 0x07, ffd_track_tbl_tail },
+    };
+    for (int i = 0; i < 9; ++i)
+        memcpy(g_track + (ts[i].off - TRACK_BASE), ts[i].src, ts[i].len);
+}
+
+static int g_tF6CD = 0x31DD;              /* the curve pointer (original offsets) */
 static int g_prev_phase = -1;
 
-void track_load(const char *path) { (void)path; }   /* curve is in the blob now */
+void track_load(const char *path) { (void)path; }   /* curve is data now */
 void track_reset(void)
 {
-    g_tF6CD = (int)GW(0x33D2);
-    GW(0xF6CD) = (u16)g_tF6CD;            /* keep the DGROUP field (tF6CD) live:
+    g_tF6CD = (int)trk_w(0x33D2);
+    Gw_track_ptr = (u16)g_tF6CD;            /* keep the tF6CD field live:
                                            * the camera reads the curve through it */
     g_prev_phase = -1;
 }
@@ -78,20 +101,20 @@ void track_reset(void)
 void track_advance(void)
 {
     ++g_tF6CD;
-    if (GB(g_tF6CD + 0x0F) == 0x7F) {
-        u16 wF480 = GW(0xF480);
-        if (GD(0x33D2 + (u32)wF480 * 4) == 0) wF480 = 0;       /* null entry -> wrap */
-        g_tF6CD = (int)GW(0x33D2 + (u32)wF480 * 4);             /* ptr33D2[wF480].off */
-        GW(0xF480) = (u16)(wF480 + 1);
+    if (trk_b(g_tF6CD + 0x0F) == 0x7F) {
+        u16 wF480 = Gw_track_seg;
+        if (trk_d(0x33D2 + wF480 * 4) == 0) wF480 = 0;         /* null entry -> wrap */
+        g_tF6CD = (int)trk_w(0x33D2 + wF480 * 4);              /* ptr33D2[wF480].off */
+        Gw_track_seg = (u16)(wF480 + 1);
     }
-    GW(0xF6CD) = (u16)g_tF6CD;            /* mirror into the real tF6CD field */
+    Gw_track_ptr = (u16)g_tF6CD;            /* mirror into the tF6CD field */
 }
 
 /* signed curve byte for band offset c (0..14) at the current pointer */
-static int track_curve(int c) { return (i8)GB(g_tF6CD + c); }
+static int track_curve(int c) { return (i8)trk_b(g_tF6CD + c); }
 
 /* current road-curve byte (tF6CD.u1)->b0000 — used by the car-lean column. */
-int track_curve_now(void) { return (i8)GB(g_tF6CD); }
+int track_curve_now(void) { return (i8)trk_b(g_tF6CD); }
 /* current track pointer (diagnostics: compare vs the QEMU tF6CD trace). */
 int track_pos(void) { return g_tF6CD; }
 
@@ -104,7 +127,7 @@ int track_pos(void) { return g_tF6CD; }
  * (straight) instead of 4 (the 0x31FE curve segment) — the road never bends. */
 void track_step(void)
 {
-    int phase = GW(0xEA3C) & 0x30;
+    int phase = Gw_dist_lo & 0x30;
     if (g_prev_phase < 0 || g_prev_phase != phase) {
         track_advance();
         g_prev_phase = phase;
@@ -112,12 +135,15 @@ void track_step(void)
 }
 
 /* ---- DGROUP offsets (verbatim from the decompiled source) ---------------- */
-#define OFF_COORD   0x2C51   /* a2C51 / a2C53 coord table (16 depth levels x 4 cols) */
 #define OFF_BASE    0x2CD5   /* 11477: base perspective table, 256 bytes            */
-#define OFF_DC84    0xDC84   /* 56452: half-width LUT  = base*100>>7                */
-#define OFF_E4CC    0xE4CC   /*        scale LUT       = base>>1                    */
-#define OFF_SCROLL  0xEA3C   /* tEA3C scroll accumulator                           */
-#define OFF_PLAYERX 0xF1FD   /* wF1FD player x (road lateral position)             */
+/* the derived perspective LUTs (were the G byte regions DC84/E4CC) */
+u8 g_persp_scale[0x100];   /* E4CC */
+u8 g_persp_halfw[0x100];   /* DC84 */
+/* THE ROAD COORD TABLE (de-DGROUP'd): was a2C51 @0x2C51 — 16 depth levels x 4
+ * columns at a 0x20-byte column stride. RoadCoords lays the columns out with
+ * the SAME stride (16 i16 each; center[] carries the a2CB1 alias + the 2-entry
+ * trailing spill), so one flat index reproduces ENT(k,c) = 0x2C51+2k+0x20c. */
+RoadCoords g_road;
 
 /* Set/Reset colours, as programmed by the EGA draw routines (see header). */
 enum { COL_GROUND = 0x02, COL_SKY = 0x04, COL_DASH = 0x06, COL_ROAD = 0x0E, COL_STRIPE = 0x0A };
@@ -129,9 +155,11 @@ enum { COL_GROUND = 0x02, COL_SKY = 0x04, COL_DASH = 0x06, COL_ROAD = 0x0E, COL_
  * offset only when writing the linear framebuffer. */
 #define PF_Y 48
 
-/* coord-table entry k, column c (cols at +0x00/+0x20/+0x40/+0x60 bytes):
- *   col0 = left x, col1 = right x, col2 = screen Y, col3 = centre accumulator. */
-#define ENT(k, c) ((OFF_COORD) + 2 * (k) + 0x20 * (c))
+/* coord-table CELL (an i16 lvalue) — k = depth level, c = column:
+ *   col0 = left x, col1 = right x, col2 = screen Y, col3 = centre accumulator
+ * (= the a2CB1 the entity projector interpolates). g_road's column-major
+ * layout matches the original 0x20-byte column stride exactly. */
+#define ENT(k, c) (((i16 *)&g_road)[(c) * 0x10 + (k)])
 
 /* ------------------------------------------------------------------------- */
 /* fn0869_158D (table-build part): derive the half-width and scale LUTs from  */
@@ -141,8 +169,8 @@ enum { COL_GROUND = 0x02, COL_SKY = 0x04, COL_DASH = 0x06, COL_ROAD = 0x0E, COL_
 static void setup_persp_luts(void)
 {
     for (int si_24 = 0x00; si_24 < 0x0100; ++si_24) {
-        GB(OFF_DC84 + si_24) = (u8)((u16)GB(OFF_BASE + si_24) * 100 >> 0x07);
-        GB(OFF_E4CC + si_24) = (u8)(GB(OFF_BASE + si_24) >> 0x01);
+        g_persp_halfw[si_24] = (u8)((u16)ffd_persp_ramp[si_24] * 100 >> 0x07);
+        g_persp_scale[si_24] = (u8)(ffd_persp_ramp[si_24] >> 0x01);
     }
 }
 
@@ -152,34 +180,34 @@ static void setup_persp_luts(void)
 static void world_road_perspective(void)
 {
     /* es_bx_19 = ds->tF6CD;  -- curve far ptr -> level track (absent); curve = 0 */
-    int di_27 = 0x10 - (GW(OFF_SCROLL) & 0x0F);                 /* Eq_5091 di_27 */
+    int di_27 = 0x10 - (Gw_dist_lo & 0x0F);                 /* Eq_5091 di_27 */
 
-    if ((i16)GW(OFF_PLAYERX) > 0x0136)      GW(OFF_PLAYERX) = 0x0136;
-    else if ((i16)GW(OFF_PLAYERX) < 0x0A)   GW(OFF_PLAYERX) = 0x0A;
+    if ((i16)Gw_road_center > 0x0136)      Gw_road_center = 0x0136;
+    else if ((i16)Gw_road_center < 0x0A)   Gw_road_center = 0x0A;
 
     /* a2C51 (entry 0): the nearest / screen-edge quad */
-    GW(ENT(0, 0)) = (u16)(GW(OFF_PLAYERX) + (u16)~0xCD);        /* w0000 */
-    GW(ENT(0, 1)) = (u16)(GW(OFF_PLAYERX) + 0xCE);             /* w0020 */
-    GW(ENT(0, 2)) = 0x98;                                      /* w0040 (Y = 152) */
-    i16 si_48 = (i16)GW(OFF_PLAYERX);                          /* ci16 si_48 */
-    GW(ENT(0, 3)) = (u16)(si_48 + (i16)~0x9F);                 /* w0060 */
+    ENT(0, 0) = (i16)(Gw_road_center + (u16)~0xCD);            /* w0000 */
+    ENT(0, 1) = (i16)(Gw_road_center + 0xCE);                  /* w0020 */
+    ENT(0, 2) = 0x98;                                          /* w0040 (Y = 152) */
+    i16 si_48 = (i16)Gw_road_center;                          /* ci16 si_48 */
+    ENT(0, 3) = (i16)(si_48 + (i16)~0x9F);                     /* w0060 */
 
     i16 curve0 = (i16)track_curve(0);                         /* (es_bx_19.u1)->b0000 */
     i32 ax_65 = (i32)di_27 * curve0;                          /* Eq_5147 */
-    u16 ax_56 = (u16)GB(OFF_E4CC + di_27);                     /* Eq_5153 ax_56.u1 */
+    u16 ax_56 = (u16)g_persp_scale[di_27];                     /* Eq_5153 ax_56.u1 */
     /* si_122 is SIGNED (= wF1FD - 0xA0 + curve): negative when the car steers
      * right of centre. The 16-bit Borland multiply ax_56*si_122 is a signed
      * 16-bit product (low word), then an ARITHMETIC >>7. (Treating si_122 as
      * unsigned here is wrong and only hides while wF1FD==0xA0, i.e. si_122==0.) */
     i16 si_122 = (i16)(si_48 + (i16)~0x9F + (i16)(ax_65 >> 4));
     i16 ax_76 = (i16)(((i16)((u16)ax_56 * (u16)si_122) >> 7) + 0xA0);
-    u16 ax_80 = (u16)GB(OFF_DC84 + di_27);                     /* Eq_5170 ax_80.u1 */
+    u16 ax_80 = (u16)g_persp_halfw[di_27];                     /* Eq_5170 ax_80.u1 */
 
     /* a2C53 (entry 1) */
-    GW(ENT(1, 0)) = (u16)(ax_76 - (i16)ax_80);                /* w0000 (left)  */
-    GW(ENT(1, 1)) = (u16)((i16)ax_80 + ax_76);               /* w0020 (right) */
-    GW(ENT(1, 2)) = (u16)((ax_56 >> 1) + 0x55);              /* w0040 (Y)     */
-    GW(ENT(1, 3)) = si_122;                                   /* w0060         */
+    ENT(1, 0) = (i16)(ax_76 - (i16)ax_80);                    /* w0000 (left)  */
+    ENT(1, 1) = (i16)((i16)ax_80 + ax_76);                    /* w0020 (right) */
+    ENT(1, 2) = (i16)((ax_56 >> 1) + 0x55);                   /* w0040 (Y)     */
+    ENT(1, 3) = si_122;                                       /* w0060         */
 
     int wLoc08_182 = (i16)(ax_65 >> 4);
     int di_107 = di_27 + 16;                                  /* Eq_5196 di_107 */
@@ -187,23 +215,23 @@ static void world_road_perspective(void)
     for (int wLoc0A_190 = 0x02; wLoc0A_190 < 0x10; ++wLoc0A_190) {
         i16 curve = (i16)track_curve(wLoc0A_190 - 1);         /* *ptrLoc06_193 (tF6CD+k) */
         int v27_118 = wLoc08_182 + curve;
-        u16 ax_111 = (u16)(GB(OFF_E4CC + di_107) >> 0x01);
+        u16 ax_111 = (u16)(g_persp_scale[di_107] >> 0x01);
         si_122 = (i16)(si_122 + v27_118);
         i16 ax_129 = (i16)(((i16)((u16)ax_111 * (u16)si_122) >> 6) + 0xA0);
-        u16 ax_133 = (u16)GB(OFF_DC84 + di_107);
+        u16 ax_133 = (u16)g_persp_halfw[di_107];
 
-        GW(ENT(wLoc0A_190, 0)) = (u16)(ax_129 - (i16)ax_133);  /* w0000 left  */
-        GW(ENT(wLoc0A_190, 1)) = (u16)((i16)ax_133 + ax_129);  /* w0020 right */
-        GW(ENT(wLoc0A_190, 2)) = (u16)(ax_111 + 0x55);         /* w0040 Y     */
-        GW(ENT(wLoc0A_190, 3)) = si_122;                       /* w0060       */
+        ENT(wLoc0A_190, 0) = (i16)(ax_129 - (i16)ax_133);      /* w0000 left  */
+        ENT(wLoc0A_190, 1) = (i16)((i16)ax_133 + ax_129);      /* w0020 right */
+        ENT(wLoc0A_190, 2) = (i16)(ax_111 + 0x55);             /* w0040 Y     */
+        ENT(wLoc0A_190, 3) = si_122;                           /* w0060       */
 
         wLoc08_182 = v27_118;
         di_107 += 16;
     }
 
     /* trailing spill written by the loop's final pointer (faithful, unused below) */
-    GW(0x2C51 + 2 * 0x10 + 0x60) = si_122;   /* ptrLoc0E_200->w0060 */
-    GW(0x2C51 + 2 * 0x10 + 0x62) = si_122;   /* ptrLoc0E_200->w0062 */
+    g_road.center[16] = si_122;              /* ptrLoc0E_200->w0060 */
+    g_road.center[17] = si_122;              /* ptrLoc0E_200->w0062 */
 }
 
 /* ------------------------------------------------------------------------- */
@@ -328,23 +356,22 @@ static void draw_band(int yk, int lxk, int rxk,
 static void draw_road(void)
 {
     /* wArg04 = (ss->*bp).wFFFFFFB6 = ds->tEA3C & 0x30 (animation phase) */
-    int wArg04 = (int)(GW(OFF_SCROLL) & 0x30);
+    int wArg04 = (int)(Gw_dist_lo & 0x30);
     int bp_165 = (wArg04 >> 0x04) & 0x03;
 
-    /* di_129 walks 0x2C51,0x2C53,... (entries 0..14); reads next entry at +2. */
+    /* di_129 walks the depth levels 0..14; reads the next entry at k+1. */
     for (int k = 0; k < 15; ++k) {
-        int base = OFF_COORD + 2 * k;
-        i16 cx_58 = GI(base + 0x00);          /* left x  [k]   */
-        i16 dx_59 = GI(base + 0x40);          /* Y       [k]   */
-        i16 ax_60 = GI(base + 0x02);          /* left x  [k+1] */
-        i16 bx_61 = GI(base + 0x42);          /* Y       [k+1] */
+        i16 cx_58 = ENT(k, 0);                /* left x  [k]   */
+        i16 dx_59 = ENT(k, 2);                /* Y       [k]   */
+        i16 ax_60 = ENT(k + 1, 0);            /* left x  [k+1] */
+        i16 bx_61 = ENT(k + 1, 2);            /* Y       [k+1] */
 
         if (bx_61 != dx_59) {
-            i16 rx0 = GI(base + 0x20);        /* right x [k]   (ds->*(di+32))   */
-            i16 rx1 = GI(base + 0x22);        /* right x [k+1] (ds->*(di+0x22)) */
+            i16 rx0 = ENT(k, 1);              /* right x [k]   (ds->*(di+32))   */
+            i16 rx1 = ENT(k + 1, 1);          /* right x [k+1] (ds->*(di+0x22)) */
 
             int stripe = 0;
-            if (base < 0x2C6B) {              /* di_129 < 11371 */
+            if (k < 13) {                     /* di_129 < 11371 (= 0x2C51+2k < 0x2C6B) */
                 ++bp_165;
                 if (bp_165 & 0x01)
                     stripe = ((bp_165 & 0x02) == 0) ? 1 : 2;

@@ -5,6 +5,13 @@ web/index.js
 web/index.wasm
 web/index.data
 
-# game data extracted from YOUR copy of the original — never committed
+# your copy's graphics, extracted by scripts/extract_assets.sh — never committed
 assets/*
 !assets/.gitkeep
+
+# tooling build artifacts
+__pycache__/
+*.pyc
+tools/dump_font
+tools/render_cpt
+tools/render_title

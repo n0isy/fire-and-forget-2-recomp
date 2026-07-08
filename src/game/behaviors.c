@@ -12,13 +12,12 @@
  *    (screen_x/di/screen_y/x_accum/vx/vz/vy/z_pos/state_phase/timer/param/
  *     hp/hit_flag/targetable/shape_kind/substate). Handler-scratch offsets
  *    (0x1b, 0x27, ...) are reached with EF() — byte-exact, like the original.
- *  - The original DGROUP globals are byte-exact in `G`. Ghidra's DAT_2000_xxxx
- *    sit at DGROUP offset xxxx+0x21F0, DAT_1de1_xxxx at offset xxxx. We use the
- *    confirmed named G fields where they line up (scroll_speed=c7dc,
- *    scroll_x=bb94, scroll_horizon=bb96, aim_target=ba78, invuln_timer=ba7c)
- *    and GW(off) for the few that have no clean name (comments give the DAT).
- *  - Aiming / player collision use the FAITHFUL DGROUP fields G.scroll_x (bb94,
- *    the crosshair X base: 2*scroll_x) and G.scroll_horizon (bb96, crosshair Y =
+ *  - SCALAR STATE goes through the gnames.h aliases (backed by the de-DGROUP'd
+ *    gstate.h blocks); STATIC CONTENT (sine/cos LUTs, prototypes, boss offset
+ *    tables) is still read from the G image by offset. Ghidra's DAT_2000_xxxx
+ *    sit at DGROUP offset xxxx+0x21F0, DAT_1de1_xxxx at offset xxxx.
+ *  - Aiming / player collision use the FAITHFUL DGROUP fields Gw_car_x (bb94,
+ *    the crosshair X base: 2*scroll_x) and Gw_horizon (bb96, crosshair Y =
  *    0x87-scroll_horizon) — NOT the GameCtx shell GC.player_x/y, which drift off
  *    the DGROUP values outside the drawn player sprite (caught by the type-43
  *    BANZAI spawn-test: screen_y 144 vs 0).
@@ -27,59 +26,55 @@
  *    (161c:22f6) — both fully ported below.
  */
 #include "ff_game.h"
+#include "gnames.h"
+#include "data/gamedata.h"   /* ffd_sine_lut/ffd_cosine_lut/ffd_rng_seed/boss tables */
 #include <string.h>
 
 /* byte-exact access to a slot offset not covered by a named Entity field */
 #define EF(e, off, ty)  (*(ty *)((uint8_t *)(e) + (off)))
-/* byte-exact access to a DGROUP global by offset (G is the byte-exact image) */
-#define GW(off, ty)     (*(ty *)((uint8_t *)&G + (off)))
 
-/* --- DGROUP globals referenced by the original (with their Ghidra DAT name) --- */
-/* DAT_2000_d27a — live enemy count (decremented when a slot despawns) */
-#define G_ENEMY_COUNT   GW(0xF46A, i16)
-/* DAT_2000_d4c1 — "player hit this frame" flag (set on contact) */
-#define G_PLAYER_HIT    GW(0xF6B1, u8)
-/* DAT_2000_d4e1 — live enemy-shot count (gates new shots) */
-#define G_SHOT_COUNT    GW(0xF6D1, i16)
-/* DAT_2000_ba7b — parent-aircraft-alive flag (swooper / aircraft) */
-#define G_AIRCRAFT_FLAG GW(0xDC6B, u8)
-/* DAT_2000_d4c8 — kill counter; wraps every 0xFF kills to award a bonus */
-#define G_KILL_CTR      GW(0xF6B8, i16)
-/* DAT_1de1_27d1 / 27d3 — 32-bit BCD-ish score (low/high word) */
-#define G_SCORE_LO      GW(0x27D1, u16)
-#define G_SCORE_HI      GW(0x27D3, u16)
+/* --- the old local G_* macros, now thin aliases into the naming layer ------
+ * (Ghidra DAT names kept for cross-referencing the decompile) --- */
+#define G_ENEMY_COUNT   Gi_enemy_count    /* DAT_2000_d27a */
+#define G_PLAYER_HIT    Gb_player_hit     /* DAT_2000_d4c1 */
+#define G_SHOT_COUNT    Gi_shot_count     /* DAT_2000_d4e1 */
+#define G_AIRCRAFT_FLAG Gb_aircraft_flag  /* DAT_2000_ba7b */
+#define G_KILL_CTR      Gi_kill_ctr       /* DAT_2000_d4c8 */
+#define G_SCORE_LO      Gw_bonus_lo       /* DAT_1de1_27d1 (BONUS, misnomer kept) */
+#define G_SCORE_HI      Gw_bonus_hi       /* DAT_1de1_27d3 */
 
 /* ------------------------------------------------------------------ */
 /* helpers                                                            */
 /* ------------------------------------------------------------------ */
 
+/* THE ENEMY PRNG (de-DGROUP'd): the 0x37-word pool (was DAT_2000_d559 @0xF749)
+ * and its two cursors (were DAT_1de1_37a3/37a5) as a standalone typed block.
+ * The SEED table stays where it belongs — the static data ffd_rng_seed @0x37A7. */
+static i16 g_rng_pool[0x37];
+static i16 g_rng_r1, g_rng_r2;
+
 /* port 120d:02d3 — rng_seed_init: SEED the additive-Fibonacci PRNG. Called once
  * by main (FUN_103c_0009 @ startup). Sets the two cursors (r1=0x17, r2=0x36) and
- * copies the 0x37-word seed table from DAT_1de1_37a7 (@0x37A7, in the blob) into
- * the runtime pool DAT_2000_d559 (@0xF749). CRITICAL: 0xF749 is BEYOND the 0xD7F0
- * dgroup image, so without this the pool is BSS-zero and rng16() always returns 0
+ * copies the 0x37-word seed table from DAT_1de1_37a7 (@0x37A7, static data) into
+ * the runtime pool. Without this the pool is zero and rng16() always returns 0
  * — which made the MIRADOR (type 25, first RNG user @f534) fire a spurious shot
  * that the reference never fires (the f537 entity-pool divergence). */
 void ff_rng_seed(void)
 {
-    GW(0x37A3, i16) = 0x17;                             /* DAT_1de1_37a3 = 0x17 */
-    GW(0x37A5, i16) = 0x36;                             /* DAT_1de1_37a5 = 0x36 */
+    g_rng_r1 = 0x17;                                    /* DAT_1de1_37a3 = 0x17 */
+    g_rng_r2 = 0x36;                                    /* DAT_1de1_37a5 = 0x36 */
     for (int i = 0; i < 0x37; ++i)                      /* pool[0..0x36] = seed[] */
-        GW(0xF749 + i * 2, u16) = GW(0x37A7 + i * 2, u16);
+        g_rng_pool[i] = (i16)ffd_rng_seed[i];
 }
 
-/* port 120d:0319 — additive lagged-Fibonacci PRNG over a 0x37-word DGROUP
- * pool (DAT_2000_d559 @ DGROUP 0xF749), driven by two cursors. Returns the
- * fresh signed 16-bit word. (Pool is seeded by rng_seed_init above.) */
+/* port 120d:0319 — additive lagged-Fibonacci PRNG over the 0x37-word pool,
+ * driven by two cursors. Returns the fresh signed 16-bit word. */
 static int rng16(void)
 {
-    i16 *r1  = &GW(0x37A3, i16);                       /* DAT_1de1_37a3 */
-    i16 *r2  = &GW(0x37A5, i16);                       /* DAT_1de1_37a5 */
-    i16 *tbl = (i16 *)((uint8_t *)&G + 0xF749);        /* DAT_2000_d559[] */
-    if (*r1 < 1) *r1 = 0x36; else *r1 -= 1;
-    if (*r2 < 1) *r2 = 0x36; else *r2 -= 1;
-    tbl[*r2] = (i16)(tbl[*r2] + tbl[*r1]);
-    return tbl[*r2];
+    if (g_rng_r1 < 1) g_rng_r1 = 0x36; else g_rng_r1 -= 1;
+    if (g_rng_r2 < 1) g_rng_r2 = 0x36; else g_rng_r2 -= 1;
+    g_rng_pool[g_rng_r2] = (i16)(g_rng_pool[g_rng_r2] + g_rng_pool[g_rng_r1]);
+    return g_rng_pool[g_rng_r2];
 }
 
 /* port 15ae:056a — narrow AABB test of the enemy against the player (FAITHFUL):
@@ -87,9 +82,9 @@ static int rng16(void)
  *   dy = screen_y - (0x87 - wDD86),   |dy| < 10        */
 static int ent_hit_player(Entity *e)
 {
-    int dx = (i16)e->screen_x - (i16)GW(0xDD84, u16);
+    int dx = (i16)e->screen_x - (i16)Gw_car_x;
     if (!(dx < 0x1e && dx > -0x1e)) return 0;
-    int dy = (i16)e->screen_y - (0x87 - (i16)GW(0xDD86, u16));
+    int dy = (i16)e->screen_y - (0x87 - (i16)Gw_horizon);
     return (dy < 10 && dy > -10);
 }
 
@@ -103,20 +98,20 @@ static void pickup_pass(Entity *e, int di, int type)
 {
     if (di >= 1) return;
     if (ent_hit_player(e)) {
-        u16 lo = GW(0x27D1, u16);                    /* bonus += 10 (32-bit) */
-        GW(0x27D1, u16) = (u16)(lo + 10);
-        GW(0x27D3, u16) += (u16)(lo > 0xFFF5);
+        u16 lo = Gw_bonus_lo;                    /* bonus += 10 (32-bit) */
+        Gw_bonus_lo = (u16)(lo + 10);
+        Gw_bonus_hi += (u16)(lo > 0xFFF5);
         switch (type) {
         case 3:                                      /* 047a BID KERO: K bar */
-            GW(0xDC78, i16) += 8;
-            if (GW(0xDC78, i16) > 0x1F) GW(0xDC78, i16) = 0x1F;
+            Gi_kero += 8;
+            if (Gi_kero > 0x1F) Gi_kero = 0x1F;
             break;
         case 2:                                      /* 04c7 BID FUEL: F window */
-            GW(0xDC6C, u16) = 0x3F;
+            Gw_fuel_window = 0x3F;
             break;
         case 4:                                      /* 0508 MISSILES: engine  */
-            GW(0xE9C8, i16) += 4;
-            if (GW(0xE9C8, i16) > 0x12) GW(0xE9C8, i16) = 0x12;
+            Gi_missile_fuel += 4;
+            if (Gi_missile_fuel > 0x12) Gi_missile_fuel = 0x12;
             break;
         }
         /* FUN_1c3a_027b(0x16) — pickup sfx, omitted */
@@ -150,20 +145,21 @@ static void ent_die(Entity *e)
         u16 lo = G_SCORE_LO;
         G_SCORE_LO = lo + 10;
         if (lo > 0xfff5) G_SCORE_HI += 1;
-        GW(0xF6B2, u8) = 0x0C;  /* d4c2 = 0xc — the BONUS banner countdown */
+        Gb_bonus_banner = 0x0C;  /* d4c2 = 0xc — the BONUS banner countdown */
         G_KILL_CTR = 0xff;
     }
     /* accumulate this enemy's point value (scratch @0x29) into the bonus total */
     {
         u16 v = EF(e, 0x29, u16);
-        u16 lo = GW(0x27C9, u16);
-        GW(0x27C9, u16) = lo + v;
-        GW(0x27CB, u16) += (u16)(((i16)v >> 15) + (lo + v < lo));
+        u16 lo = Gw_score_lo;
+        Gw_score_lo = lo + v;
+        Gw_score_hi += (u16)(((i16)v >> 15) + (lo + v < lo));
     }
 }
 
-/* pool slot base pointer (raw byte access, offsets as in the ROM) */
-#define POOL ((u8 *)&G + 0xE5CC)
+/* pool slot base pointer (raw byte access, offsets as in the ROM; the pool is
+ * the de-DGROUP'd g_pool block — in-slot offsets unchanged) */
+#define POOL ENT_BASE
 
 /* port 13a8:1a1e — fire an enemy shot (type 58 = enemy_update_ballistic).
  * FAITHFUL: concurrency cap (d4e1+d27a < 5); scan slots 14..0 DOWNWARD for a
@@ -204,14 +200,14 @@ static void ballistic_aim(Entity *e)
 {
     u8 *p = (u8 *)e;
     i16 vz = *(i16 *)(p + 0x11);
-    i16 denom = (i16)((i16)GW(0xE9CC, i16) - vz);      /* c7dc(speed) - vz */
+    i16 denom = (i16)((i16)Gi_speed - vz);      /* c7dc(speed) - vz */
     if (denom == 0) { e->type_state = 0xFF; return; }
     i16 iv = (i16)(*(i16 *)(p + 3) / denom);           /* di / (speed - vz) */
     if (iv == 0) {
         *(i16 *)(p + 0x0F) = 0;
     } else {
-        *(i16 *)(p + 0x0F) = (i16)(((i16)GW(0xDD84, i16) - *(i16 *)(p + 1)) / iv);
-        *(i16 *)(p + 0x13) = (i16)(((0x87 - (i16)GW(0xDD86, i16)) - *(i16 *)(p + 5)) / iv);
+        *(i16 *)(p + 0x0F) = (i16)(((i16)Gi_car_x - *(i16 *)(p + 1)) / iv);
+        *(i16 *)(p + 0x13) = (i16)(((0x87 - (i16)Gi_horizon) - *(i16 *)(p + 5)) / iv);
     }
 }
 
@@ -227,8 +223,9 @@ static void ent_pass_player(Entity *e)
 /* player projectiles (161c:0038 / 0205) + explosion (161c:0555)       */
 /* ------------------------------------------------------------------ */
 
-/* pool slot base pointer (raw byte access, offsets as in the ROM) */
-#define POOL ((u8 *)&G + 0xE5CC)
+/* pool slot base pointer (raw byte access, offsets as in the ROM; the pool is
+ * the de-DGROUP'd g_pool block — in-slot offsets unchanged) */
+#define POOL ENT_BASE
 
 /* port 161c:0038 — the player's GUN shot (type 0). Flight: two boost
  * steps (timer += 10 -> vz; vx = param*10 then vx <<= 1), lifetime 0x14
@@ -314,7 +311,7 @@ void ent_homing_missile(Entity *e, int di)
                 if (dz < 0 || dz > (i16)e->timer) continue;
                 int ok = 1;
                 if ((i16)e->timer == dz) {             /* tie: prefer our side */
-                    if ((i16)GW(0xDD84, u16) < 0) ok = (*(i16 *)(t + 7) <= 0);
+                    if ((i16)Gw_car_x < 0) ok = (*(i16 *)(t + 7) <= 0);
                     else                          ok = (*(i16 *)(t + 7) >= 0);
                 }
                 if (ok) { e->state_phase = (u16)i; e->timer = (u16)dz; }
@@ -380,16 +377,16 @@ void ent_explosion_small(Entity *e, int di)
         e->type_state = 0xFF;
         if (me[0x2D]) G_ENEMY_COUNT -= 1;
         if (di < 1) {
-            GW(0xF085, u16) = 0x2E;                    /* ce95: overlay sprite */
-            GW(0xDE67, u16) = *(u16 *)(me + 0x09);     /* bc77 */
-            GW(0xDE6B, u16) = *(u16 *)(me + 0x0B);     /* bc7b */
+            Gw_cflash_spr = 0x2E;                    /* ce95: overlay sprite */
+            Gw_cflash_x = *(u16 *)(me + 0x09);     /* bc77 */
+            Gw_cflash_y = *(u16 *)(me + 0x0B);     /* bc7b */
         }
         return;
     }
     if ((e->timer & 1) == 0) {
-        GW(0x135C, i16) = 0x3C;                        /* morph pulse (+sfx 0x13) */
+        Gi_explo_size = 0x3C;                        /* morph pulse (+sfx 0x13) */
     } else {
-        GW(0x135C, i16) = 0x50;
+        Gi_explo_size = 0x50;
     }
     u16 t = e->timer;
     e->timer = (u16)(t - 1);
@@ -463,11 +460,11 @@ void ent_wobble_shooter(Entity *e, int di)
     if (e->hp == 0) { ent_die(e); return; }
     if (di < 0)     { ent_pass_player(e); return; }
 
-    if ((i16)G.aim_target < 0) e->vz += 1;
-    else                       e->vz = (i16)G.scroll_speed - 2;
+    if ((i16)Gw_lives < 0) e->vz += 1;
+    else                       e->vz = (i16)Gw_speed - 2;
 
     e->state_phase = (e->state_phase + 7) & 0xff;
-    const i16 *sine = (const i16 *)((uint8_t *)&G + 0x2DD5);   /* DAT_1de1_2dd5 */
+    const i16 *sine = ffd_sine_lut;                            /* DAT_1de1_2dd5 */
     e->x_accum = (u16)(sine[e->state_phase] >> 1);
 
     if (e->hit_flag && di > 0x32 && di < 0x96) {
@@ -487,22 +484,22 @@ void ent_swooper(Entity *e, int di)
     case 0:
         /* launch side by the SIGN OF scroll_x (bb94) — ndisasm @161c:07d9:
          * `cmp word [0xdd84],0` (dd84 = bb94+21f0) -> x=0x40 else -0x40. (Was
-         * wrongly G.aim_target/DC68=lives; demo/sweep never saw scroll_x<0 here,
+         * wrongly Gw_lives/DC68=lives; demo/sweep never saw scroll_x<0 here,
          * the L2 play run @~2460 did — swooper spawned on the wrong side.) */
-        e->x_accum  = (u16)(((i16)G.scroll_x < 0) ? 0x40 : -0x40);
-        e->screen_x = (u16)((i16)e->x_accum - (i16)G.scroll_x);
-        e->vz       = (i16)G.scroll_speed + 2;
+        e->x_accum  = (u16)(((i16)Gw_car_x < 0) ? 0x40 : -0x40);
+        e->screen_x = (u16)((i16)e->x_accum - (i16)Gw_car_x);
+        e->vz       = (i16)Gw_speed + 2;
         e->state_phase += 1;
         break;
     case 1:
-        e->vz = (i16)G.scroll_speed + 2;
+        e->vz = (i16)Gw_speed + 2;
         if (di > 0x40) e->state_phase += 1;
         break;
     case 2:
-        if      ((i16)G.aim_target < 0) e->vz += 1;
-        else if (di < 0x40)             e->vz = (i16)G.scroll_speed + 1;
-        else if (di < 0x41)             e->vz = (i16)G.scroll_speed;
-        else                            e->vz = (i16)G.scroll_speed - 1;
+        if      ((i16)Gw_lives < 0) e->vz += 1;
+        else if (di < 0x40)             e->vz = (i16)Gw_speed + 1;
+        else if (di < 0x41)             e->vz = (i16)Gw_speed;
+        else                            e->vz = (i16)Gw_speed - 1;
         if (e->hit_flag) {
             u16 old = e->timer; e->timer = old + 1;
             if (old & 4) ent_fire_shot(e);
@@ -525,13 +522,13 @@ void ent_dive_bomber(Entity *e, int di)
 
     if (e->state_phase == 0) {
         e->vz = 0;
-        if (di < 0x81 || (i16)G.aim_target < 0) {
+        if (di < 0x81 || (i16)Gw_lives < 0) {
             if (di < 0x20 || (i16)e->timer < 0) {       /* trigger the dive */
                 e->state_phase = 1;
                 EF(e, 0x1b, i16) += 10;
-                e->vz = (i16)G.scroll_speed + 6;
+                e->vz = (i16)Gw_speed + 6;
                 e->vy = 0x14;
-            } else if ((i16)G.aim_target < 0) {
+            } else if ((i16)Gw_lives < 0) {
                 e->timer = 0xffff;
             } else {
                 e->timer -= 1;
@@ -541,7 +538,7 @@ void ent_dive_bomber(Entity *e, int di)
         e->vy = 0; e->vz = 0; e->state_phase = 0; e->timer = 100;
         EF(e, 0x1b, i16) -= 10;
     } else {
-        e->vz = (i16)G.scroll_speed + 3;
+        e->vz = (i16)Gw_speed + 3;
         e->vy -= 2;
     }
 }
@@ -555,8 +552,8 @@ void ent_strafer(Entity *e, int di)
 
     if (di < 0xb0) {
         int t = ((i16)e->x_accum < 0)
-              ? (i16)G.scroll_x * 2 - (i16)e->x_accum
-              : (i16)e->x_accum - (i16)G.scroll_x * 2;
+              ? (i16)Gw_car_x * 2 - (i16)e->x_accum
+              : (i16)e->x_accum - (i16)Gw_car_x * 2;
         unsigned mask = (t < 0x46) ? 3u : (t < 0x8c) ? 7u : (t < 0xd2) ? 0xfu : 0xffffu;
         u16 old = e->state_phase; e->state_phase = old + 1;
         if ((mask & old) == 0) ent_fire_shot(e);
@@ -577,8 +574,8 @@ void ent_gunship(Entity *e, int di)
         e->vx = 0; e->timer = 0;
     }
 
-    if ((int8_t)e->hp < 4 || G.invuln_timer == 0) {
-        e->vz = (i16)G.scroll_speed + 4;
+    if ((int8_t)e->hp < 4 || Gw_fuel_window == 0) {
+        e->vz = (i16)Gw_speed + 4;
         e->vy = 0; e->vx = 0;
         EF(e, 0x27, i16) += 1;
         if ((EF(e, 0x27, i16) & 0xf) == 0) ent_fire_shot(e);
@@ -590,7 +587,7 @@ void ent_gunship(Entity *e, int di)
         int iv = e->timer; e->timer += 1;
         if (iv < 0x65) {
             iv = (EF(e, 0x27, i16) - (i16)e->x_accum) >> 2;
-            e->vz = (i16)G.scroll_speed - ((di - 0x10) >> 4);
+            e->vz = (i16)Gw_speed - ((di - 0x10) >> 4);
             if ((e->timer & 0x3f) == 0 && iv + 0x1e < 0x3c) {
                 e->vz += 6;
                 e->z_pos -= 1;
@@ -600,7 +597,7 @@ void ent_gunship(Entity *e, int di)
             }
         } else {
             e->vz -= 1;
-            iv = ((i16)G.scroll_x * 2 - (i16)e->x_accum) >> 2;
+            iv = ((i16)Gw_car_x * 2 - (i16)e->x_accum) >> 2;
         }
         e->vx = iv;
 
@@ -633,8 +630,8 @@ void ent_crash_target(Entity *e, int di)
 {
     if (e->hp == 0) { ent_die(e); return; }
     if (di < 0) {
-        int dx = (i16)e->x_accum - 2 * (i16)G.scroll_x;         /* x_accum - 2*bb94 (161c:0e29) */
-        int dy = (i16)e->screen_y - (0x87 - (i16)G.scroll_horizon); /* screen_y - (0x87-bb96) */
+        int dx = (i16)e->x_accum - 2 * (i16)Gw_car_x;         /* x_accum - 2*bb94 (161c:0e29) */
+        int dy = (i16)e->screen_y - (0x87 - (i16)Gw_horizon); /* screen_y - (0x87-bb96) */
         if (dx < 0x8c && dx > -0x8c && dy < 0x28 && dy > -0x28) {
             G_PLAYER_HIT = 1;
             e->di = 0;
@@ -658,33 +655,33 @@ void ent_aircraft(Entity *e, int di)
 
     if (di < 0) {
         if (ent_hit_player(e)) G_PLAYER_HIT = 1;
-        e->vz = (i16)G.scroll_speed + 1;
+        e->vz = (i16)Gw_speed + 1;
     }
     if ((i16)e->screen_y < 0) e->screen_y = 0;
 
     if (e->timer == 0) {                                  /* approach run */
         if (di < 0x20) e->vx += 1;
         if (di < 5) {
-            e->vz = (i16)G.scroll_speed;
+            e->vz = (i16)Gw_speed;
             e->di = 4;
             e->timer = 1;
             e->param = EF(e, 0x1b, i16);
         } else {
             G_AIRCRAFT_FLAG = 0;
             if ((i16)e->screen_y < 0x30) e->vy += 3; else e->vy -= 3;
-            e->vz = (i16)G.scroll_speed - 3;
+            e->vz = (i16)Gw_speed - 3;
         }
-        if ((i16)G.aim_target < 0) e->timer = 2;
+        if ((i16)Gw_lives < 0) e->timer = 2;
     } else if (e->timer == 1) {                           /* attack loop */
-        if ((i16)G.aim_target < 0) e->timer = 2;
+        if ((i16)Gw_lives < 0) e->timer = 2;
         else { u16 sp = e->state_phase; e->state_phase = sp + 1; if ((i16)sp > 100) e->timer = 2; }
         if ((i16)e->screen_y < 0x30) e->vy += 3; else e->vy -= 3;
         if ((i16)e->x_accum < 0)     e->vx += 4; else e->vx -= 4;
-        e->vz = (i16)G.scroll_speed;
+        e->vz = (i16)Gw_speed;
         if (di < 4) e->vz += 1;
         EF(e, 0x1b, i16) = (i16)e->param + ((e->state_phase & 8) == 0 ? 10 : 0);
     } else if (di < 0x12d) {                              /* far cruise */
-        e->vz = (i16)G.scroll_speed + 6;
+        e->vz = (i16)Gw_speed + 6;
         if ((i16)e->screen_y < 0x30) e->vy += 3; else e->vy -= 3;
         if ((i16)e->x_accum < 0x30) e->vx += 2; else e->vx -= 2;
     } else {
@@ -700,9 +697,9 @@ void ent_tracker(Entity *e, int di)
 {
     if (e->hp == 0) { ent_die(e); return; }
     if (di < 0)     { ent_pass_player(e); return; }
-    e->vz       = (i16)G.scroll_speed - 3;
-    e->x_accum  = (u16)((i16)G.scroll_x << 1);         /* bb94 << 1 (161c:1e40) */
-    e->screen_y = (u16)(0x87 - (i16)G.scroll_horizon); /* 0x87 - bb96 */
+    e->vz       = (i16)Gw_speed - 3;
+    e->x_accum  = (u16)((i16)Gw_car_x << 1);         /* bb94 << 1 (161c:1e40) */
+    e->screen_y = (u16)(0x87 - (i16)Gw_horizon); /* 0x87 - bb96 */
 }
 
 /* port 161c:22f6 — enemy ballistic shot (type 58 ':'). Steers toward the player:
@@ -714,7 +711,7 @@ void ent_tracker(Entity *e, int di)
 void enemy_update_ballistic(Entity *e, int di)
 {
     u8 *p = (u8 *)e;
-    if (GW(0xDE6D, u8) != 0 || (i16)GW(0xF6AF, i16) == 4) {   /* bDE6D / game_mode==4 */
+    if (Gb_crash_ctr != 0 || (i16)Gi_game_mode == 4) {   /* bDE6D / game_mode==4 */
         e->type_state = 0xFF; G_SHOT_COUNT -= 1; return;
     }
     if (di < 1) {                                            /* passed the player */
@@ -767,16 +764,16 @@ void ent_splitter(Entity *e, int di)
     } else if (di < 0) {                                /* passed the player */
         ent_pass_player(e);
     } else {
-        e->vz = (i16)((i16)GW(0xE9CC, i16) - 4);        /* vz = speed - 4 */
+        e->vz = (i16)((i16)Gi_speed - 4);        /* vz = speed - 4 */
     }
 }
 
 /* port 15ae:05a6 — WIDE AABB vs the player (|dx|<0x1e && |dy|<0x1e). */
 static int ent_hit_player_wide(Entity *e)
 {
-    int dx = (i16)e->screen_x - (i16)GW(0xDD84, u16);
+    int dx = (i16)e->screen_x - (i16)Gw_car_x;
     if (!(dx < 0x1e && dx > -0x1e)) return 0;
-    int dy = (i16)e->screen_y - (0x87 - (i16)GW(0xDD86, u16));
+    int dy = (i16)e->screen_y - (0x87 - (i16)Gw_horizon);
     return (dy < 0x1e && dy > -0x1e);
 }
 
@@ -791,8 +788,8 @@ void ent_bouncing_hazard(Entity *e, int di)
     if (p[0x2F] == 0x00) { ent_die(e); return; }
     if (di < 0) {
         if (ent_hit_player_wide(e)) {                   /* screen collision */
-            GW(0xF6A9, u16) = 0x1E;                     /* d4b9 (+ sfx 3, omitted) */
-            GW(0xF203, u16) = 0x0D;                     /* d013 */
+            Gw_flash_timer = 0x1E;                     /* d4b9 (+ sfx 3, omitted) */
+            Gw_flash_colour = 0x0D;                     /* d013 */
         }
         G_ENEMY_COUNT -= 1;
         e->type_state = 0xFF;
@@ -825,14 +822,14 @@ void ent_interceptor(Entity *e, int di)
 
     if (di < 1) {
         if (*(i16 *)(p + 0x21) == 2) {
-            if (GW(0xF6AF, u16) == 0) *(i16 *)(p + 5) = 0;      /* game_mode==0: screen_y=0 */
+            if (Gw_game_mode == 0) *(i16 *)(p + 5) = 0;      /* game_mode==0: screen_y=0 */
             if (ent_hit_player(e)) {                            /* 15ae:056a */
                 G_PLAYER_HIT = 1; G_ENEMY_COUNT -= 1; e->type_state = 0xFF; return;
             }
         }
         *(i16 *)(p + 0x21) = 3;
     }
-    if ((i16)GW(0xDC68, u16) < 0 || (i8)p[0x2F] < 4) *(i16 *)(p + 0x21) = 0;
+    if ((i16)Gw_lives < 0 || (i8)p[0x2F] < 4) *(i16 *)(p + 0x21) = 0;
 
     switch (*(u16 *)(p + 0x21) < 4 ? *(u16 *)(p + 0x21) : 0xFFFF) {
     case 0:                                                     /* APPROACH */
@@ -843,11 +840,11 @@ void ent_interceptor(Entity *e, int di)
         vx = (i16)(*(i16 *)(p + 0x27) * 2 - *(i16 *)(p + 7));
         vy = (i16)((0x5A - *(i16 *)(p + 5)) >> 3);
         if (di < 10) *(i16 *)(p + 0x21) = 1;
-        if ((i16)GW(0xDC68, u16) < 0 || (i8)p[0x2F] < 4) {
+        if ((i16)Gw_lives < 0 || (i8)p[0x2F] < 4) {
             if (di > 300) { G_ENEMY_COUNT -= 1; e->type_state = 0xFF; return; }
             *(i16 *)(p + 0x11) += 1;                            /* vz += 1 */
         } else {
-            *(i16 *)(p + 0x11) = (i16)((i16)GW(0xE9CC, i16) - 4);   /* vz = speed - 4 */
+            *(i16 *)(p + 0x11) = (i16)((i16)Gi_speed - 4);   /* vz = speed - 4 */
         }
         break;
     case 1:                                                     /* TRACK */
@@ -855,27 +852,27 @@ void ent_interceptor(Entity *e, int di)
         vy = (i16)(0x5A - *(i16 *)(p + 5));
         if (vx >= 0xB) vx = 10; else if (vx < -10) vx = -10;
         if (vy >= 6)   vy = 5;  else if (vy < -5)  vy = -5;
-        *(i16 *)(p + 0x11) = (i16)GW(0xE9CC, i16);              /* vz = speed */
+        *(i16 *)(p + 0x11) = (i16)Gi_speed;              /* vz = speed */
         if (di < 8) { if (di < 6) *(i16 *)(p + 0x11) += 1; }
         else        *(i16 *)(p + 0x11) -= 1;
-        if (GW(0xF6AF, u16) < 4) {
+        if (Gw_game_mode < 4) {
             i16 t = *(i16 *)(p + 0x23); *(i16 *)(p + 0x23) = (i16)(t + 1);
             if (t > 0x5A) *(i16 *)(p + 0x21) = 2;
         } else *(i16 *)(p + 0x23) = 0;
         break;
     case 2:                                                     /* DIVE */
-        vy = (i16)((0x87 - (i16)GW(0xDD86, u16)) - *(i16 *)(p + 5));
-        vx = (i16)((i16)GW(0xDD84, u16) * 2 - *(i16 *)(p + 7));
+        vy = (i16)((0x87 - (i16)Gw_horizon) - *(i16 *)(p + 5));
+        vx = (i16)((i16)Gw_car_x * 2 - *(i16 *)(p + 7));
         if (vy > 1 || vy < -1) vy >>= 1;
         if (vx >= 0x1F) vx = 0x1E; else if (vx < -0x1E) vx = -0x1E;
         if (vy >= 0xB)  vy = 10;  else if (vy < -10)   vy = -10;
         *(i16 *)(p + 0x23) = 0;
-        *(i16 *)(p + 0x11) -= (i16)GW(0x24FF, u16);            /* vz -= blink parity */
+        *(i16 *)(p + 0x11) -= (i16)Gw_blink;            /* vz -= blink parity */
         break;
     case 3:                                                     /* RETREAT */
         vx = (i16)(-((*(i16 *)(p + 0x0F) + 1) >> 1));
         vy = (i16)(-((*(i16 *)(p + 0x13) + 1) >> 1));
-        if (*(i16 *)(p + 0x11) < (i16)GW(0xE9CC, i16) + 1) *(i16 *)(p + 0x11) += 2;
+        if (*(i16 *)(p + 0x11) < (i16)Gi_speed + 1) *(i16 *)(p + 0x11) += 2;
         if (di >= -1) *(i16 *)(p + 0x21) = 1;
         break;
     default: break;                                            /* state>=4: skip */
@@ -897,41 +894,41 @@ void enemy_update_split4_descend(Entity *e, int di)
     u8 *p = (u8 *)e;
     p[0x2E] = 0;                                             /* shape_kind = 0 */
     if (p[0x2F] == 0x00) {                                  /* boss destroyed */
-        GW(0xF7F0, i16) = (i16)((i16)GW(0xE9CC, i16) + 2);  /* d600 = speed + 2 */
-        GW(0xDC6E, u8) = 1;                                 /* ba7e anim_step = 1 */
-        GW(0xDE50, u8) = 7; GW(0xDE52, u8) = 1; GW(0xDE51, u8) = 0x3C;  /* LEADER SHOT DOWN */
+        Gi_engine_pitch = (i16)((i16)Gi_speed + 2);  /* d600 = speed + 2 */
+        Gb_stage_clear = 1;                                 /* ba7e anim_step = 1 */
+        Gb_panel_msg = 7; Gb_panel_state = 1; Gb_panel_delay = 0x3C;  /* LEADER SHOT DOWN */
         ent_die(e);                                         /* FUN_161c_2b95 */
         e->type_state = 6;                                  /* large explosion (overrides 5) */
         *(i16 *)(p + 0x23) = (i16)(*(i16 *)(p + 0x23) + 10); /* timer += 10 */
         *(i16 *)(p + 0x11) -= 1;                            /* vz -= 1 */
-        const i16 *tbl = (const i16 *)((u8 *)&G + 0x3A2E);  /* 4 {dx,dy} pairs */
+        const XY *tbl = ffd_boss73_offsets;                 /* 4 {dx,dy} pairs */
         u8 *s = POOL; int slot = 0;
         for (int k = 0; k < 4; ++k) {                       /* 4 forward free slots */
             while ((i8)s[0] >= 0 && slot <= 0x0E) { ++slot; s += 0x33; }
             if (slot < 0x0F) {
                 memcpy(s, p, 0x33);                         /* copy boss-as-explosion */
                 s[0x2D] = 0;                                /* substate = 0 */
-                *(i16 *)(s + 7) = (i16)(*(i16 *)(s + 7) + tbl[k * 2]);     /* x_accum += dx */
-                *(i16 *)(s + 5) = (i16)(*(i16 *)(s + 5) + tbl[k * 2 + 1]); /* screen_y += dy */
+                *(i16 *)(s + 7) = (i16)(*(i16 *)(s + 7) + tbl[k].dx);     /* x_accum += dx */
+                *(i16 *)(s + 5) = (i16)(*(i16 *)(s + 5) + tbl[k].dy); /* screen_y += dy */
             }
         }
     } else {
         if (di < 0x1F) {                                    /* near */
-            p[0x2E] = GW(0x3A3E + GW(0x27C7, u16), u8);     /* shape_kind = a3a3e[level] */
-            *(i16 *)(p + 0x11) = (i16)GW(0xE9CC, i16);      /* vz = speed */
-            if (di < 0x19 || GW(0xDC6C, u16) == 0) *(i16 *)(p + 0x11) += 1;
+            p[0x2E] = ffd_boss_kind_tbl[Gw_stage];   /* shape_kind = a3a3e[level] */
+            *(i16 *)(p + 0x11) = (i16)Gi_speed;      /* vz = speed */
+            if (di < 0x19 || Gw_fuel_window == 0) *(i16 *)(p + 0x11) += 1;
         } else if (di < 300) {                              /* mid */
-            if (GW(0xDC6C, u16) == 0) {
+            if (Gw_fuel_window == 0) {
                 *(i16 *)(p + 0x11) += 1;
             } else {
-                i16 v = (i16)((i16)GW(0xE9CC, i16) - 4);
+                i16 v = (i16)((i16)Gi_speed - 4);
                 if (v < 10) v = 10;
                 *(i16 *)(p + 0x11) = v;
             }
         } else {                                            /* far: despawn */
             e->type_state = 0xFF; G_ENEMY_COUNT -= 1;
         }
-        GW(0xF7F0, i16) = *(i16 *)(p + 0x11);               /* d600 = vz */
+        Gi_engine_pitch = *(i16 *)(p + 0x11);               /* d600 = vz */
     }
 }
 
@@ -947,26 +944,26 @@ void enemy_update_split4_spawner(Entity *e, int di)
     u8 *p = (u8 *)e;
     p[0x2E] = 0;                                              /* shape_kind = 0 */
     if (p[0x2F] == 0x00) {                                    /* boss destroyed */
-        GW(0xDC6E, u8) = 1;                                   /* ba7e anim_step = 1 */
-        GW(0xDE50, u8) = 7; GW(0xDE52, u8) = 1; GW(0xDE51, u8) = 0x3C;   /* LEADER SHOT DOWN */
+        Gb_stage_clear = 1;                                   /* ba7e anim_step = 1 */
+        Gb_panel_msg = 7; Gb_panel_state = 1; Gb_panel_delay = 0x3C;   /* LEADER SHOT DOWN */
         ent_die(e);
         e->type_state = 6;                                   /* large explosion */
         *(i16 *)(p + 0x23) = (i16)(*(i16 *)(p + 0x23) + 10); /* timer += 10 */
         *(i16 *)(p + 0x11) -= 1;                             /* vz -= 1 */
-        const i16 *tbl = (const i16 *)((u8 *)&G + 0x3A43);   /* 4 {dx,dy} pairs */
+        const XY *tbl = ffd_boss74_offsets;                  /* 4 {dx,dy} pairs */
         u8 *s = POOL; int slot = 0;
         for (int k = 0; k < 4; ++k) {
             while ((i8)s[0] >= 0 && slot <= 0x0E) { ++slot; s += 0x33; }
             if (slot < 0x0F) {
                 memcpy(s, p, 0x33);                          /* copy boss-as-explosion */
-                *(i16 *)(s + 7) = (i16)(*(i16 *)(s + 7) + tbl[k * 2]);       /* x_accum += dx */
-                *(i16 *)(s + 5) = (i16)(*(i16 *)(s + 5) + tbl[k * 2 + 1]);   /* screen_y += dy */
+                *(i16 *)(s + 7) = (i16)(*(i16 *)(s + 7) + tbl[k].dx);       /* x_accum += dx */
+                *(i16 *)(s + 5) = (i16)(*(i16 *)(s + 5) + tbl[k].dy);   /* screen_y += dy */
             }
         }
     } else {
         if (di < 0x1F) {                                     /* near: ride + drop mines */
-            *(i16 *)(p + 0x11) = (i16)GW(0xE9CC, i16);       /* vz = speed */
-            if (di < 0x19 || GW(0xDC6C, u16) == 0) *(i16 *)(p + 0x11) += 1;
+            *(i16 *)(p + 0x11) = (i16)Gi_speed;       /* vz = speed */
+            if (di < 0x19 || Gw_fuel_window == 0) *(i16 *)(p + 0x11) += 1;
             p[0x2E] = 3;                                     /* shape_kind = 3 */
             u16 ph = (u16)(*(u16 *)(p + 0x21) + 1);
             *(u16 *)(p + 0x21) = (u16)(ph & 7);
@@ -974,7 +971,7 @@ void enemy_update_split4_spawner(Entity *e, int di)
                 u8 *s = POOL; int slot = 0;
                 while ((i8)s[0] >= 0 && slot <= 0x0E) { ++slot; s += 0x33; }
                 if (slot < 0x0F) {
-                    memcpy(s, (u8 *)&G + 0x224F, 0x33);      /* mine proto @0x224f */
+                    memcpy(s, &g_protos[69], 0x33);          /* boss-mine proto (was @0x224f) */
                     i16 vz = *(i16 *)(p + 0x11);
                     *(i16 *)(s + 0x0F) = (i16)(*(i16 *)(p + 7) >> 4);   /* vx = x_accum>>4 */
                     *(i16 *)(s + 0x11) = vz;                            /* vz */
@@ -988,12 +985,12 @@ void enemy_update_split4_spawner(Entity *e, int di)
                 }
             }
         } else {                                             /* far */
-            i16 v = (i16)((i16)GW(0xE9CC, i16) - 4);
+            i16 v = (i16)((i16)Gi_speed - 4);
             if (v < 10) v = 10;
             *(i16 *)(p + 0x11) = v;
         }
         *(u16 *)(p + 0x23) = (u16)((*(i16 *)(p + 0x23) + 3) & 0xFF);    /* timer = (timer+3)&0xff */
-        *(i16 *)(p + 7) = (i16)(((const i16 *)((u8 *)&G + 0x2DD5))[*(i16 *)(p + 0x23)] >> 1);
+        *(i16 *)(p + 7) = (i16)(ffd_sine_lut[*(i16 *)(p + 0x23)] >> 1);
     }
 }
 
@@ -1007,33 +1004,33 @@ void enemy_update_split4_strafe(Entity *e, int di)
     u8 *p = (u8 *)e;
     p[0x2E] = 0;
     if (p[0x2F] == 0x00) {                                   /* boss destroyed */
-        GW(0xF7F0, i16) = (i16)((i16)GW(0xE9CC, i16) + 2);   /* d600 = speed+2 */
-        GW(0xDC6E, u8) = 1;
-        GW(0xDE50, u8) = 7; GW(0xDE52, u8) = 1; GW(0xDE51, u8) = 0x3C;
+        Gi_engine_pitch = (i16)((i16)Gi_speed + 2);   /* d600 = speed+2 */
+        Gb_stage_clear = 1;
+        Gb_panel_msg = 7; Gb_panel_state = 1; Gb_panel_delay = 0x3C;
         ent_die(e);
         e->type_state = 6;
         *(i16 *)(p + 0x23) = (i16)(*(i16 *)(p + 0x23) + 10);
         *(i16 *)(p + 0x11) -= 1;
-        const i16 *tbl = (const i16 *)((u8 *)&G + 0x3A53);
+        const XY *tbl = ffd_boss77_offsets;
         u8 *s = POOL; int slot = 0;
         for (int k = 0; k < 4; ++k) {
             while ((i8)s[0] >= 0 && slot <= 0x0E) { ++slot; s += 0x33; }
             if (slot < 0x0F) {
                 memcpy(s, p, 0x33);
-                *(i16 *)(s + 7) = (i16)(*(i16 *)(s + 7) + tbl[k * 2]);
-                *(i16 *)(s + 5) = (i16)(*(i16 *)(s + 5) + tbl[k * 2 + 1]);
+                *(i16 *)(s + 7) = (i16)(*(i16 *)(s + 7) + tbl[k].dx);
+                *(i16 *)(s + 5) = (i16)(*(i16 *)(s + 5) + tbl[k].dy);
             }
         }
     } else {
         if (di < 0x1F) {                                     /* near */
-            *(i16 *)(p + 0x11) = (i16)GW(0xE9CC, i16);
-            if (di < 0x19 || GW(0xDC6C, u16) == 0) *(i16 *)(p + 0x11) += 1;
+            *(i16 *)(p + 0x11) = (i16)Gi_speed;
+            if (di < 0x19 || Gw_fuel_window == 0) *(i16 *)(p + 0x11) += 1;
             p[0x2E] = 6;                                     /* shape_kind = 6 (head) */
         } else if (di < 300) {                               /* mid */
-            if (GW(0xDC6C, u16) == 0) {
+            if (Gw_fuel_window == 0) {
                 *(i16 *)(p + 0x11) += 1;
             } else {
-                i16 v = (i16)((i16)GW(0xE9CC, i16) - 4);
+                i16 v = (i16)((i16)Gi_speed - 4);
                 if (v < 10) v = 10;
                 *(i16 *)(p + 0x11) = v;
             }
@@ -1041,9 +1038,9 @@ void enemy_update_split4_strafe(Entity *e, int di)
             e->type_state = 0xFF; G_ENEMY_COUNT -= 1;
         }
         *(u16 *)(p + 0x23) = (u16)((*(i16 *)(p + 0x23) + 3) & 0xFF);
-        *(i16 *)(p + 7) = (i16)(((const i16 *)((u8 *)&G + 0x2DD5))[*(i16 *)(p + 0x23)] >> 2);
-        GW(0xF7F0, i16) = *(i16 *)(p + 0x11);                /* d600 = vz */
-        GW(0xF7F2, i16) = *(i16 *)(p + 7);                   /* d602 = x_accum */
+        *(i16 *)(p + 7) = (i16)(ffd_sine_lut[*(i16 *)(p + 0x23)] >> 2);
+        Gi_engine_pitch = *(i16 *)(p + 0x11);                /* d600 = vz */
+        Gi_engine_x = *(i16 *)(p + 7);                   /* d602 = x_accum */
     }
 }
 
@@ -1059,14 +1056,14 @@ void ent_explosion_large(Entity *e, int di)
         e->type_state = 0xFF;
         if (p[0x2D]) G_ENEMY_COUNT -= 1;
         if (di < 1) {
-            GW(0xF085, u16) = 0x2E;                    /* ce95 cockpit flash */
-            GW(0xDE67, u16) = *(u16 *)(p + 0x09);      /* bc77 */
-            GW(0xDE6B, u16) = *(u16 *)(p + 0x0B);      /* bc7b */
+            Gw_cflash_spr = 0x2E;                    /* ce95 cockpit flash */
+            Gw_cflash_x = *(u16 *)(p + 0x09);      /* bc77 */
+            Gw_cflash_y = *(u16 *)(p + 0x0B);      /* bc7b */
         }
         return;
     }
-    if ((*(u16 *)(p + 0x23) & 1) == 0) GW(0x135C, i16) = 0x78;   /* morph pulse (+sfx 0x13) */
-    else                               GW(0x135C, i16) = 0xA0;
+    if ((*(u16 *)(p + 0x23) & 1) == 0) Gi_explo_size = 0x78;   /* morph pulse (+sfx 0x13) */
+    else                               Gi_explo_size = 0xA0;
     u16 t = *(u16 *)(p + 0x23);
     *(u16 *)(p + 0x23) = (u16)(t - 1);
     if (t == 0) {
@@ -1121,7 +1118,7 @@ static void drop_mine(Entity *e)
     u8 *p = (u8 *)e;
     u8 *s = free_slot14();
     if (!s) return;
-    memcpy(s, (u8 *)&G + 0x20EA, 0x33);            /* mine proto @0x20ea */
+    memcpy(s, &g_protos[62], 0x33);                /* mine proto (was @0x20ea) */
     u16 vz = *(u16 *)(p + 0x11);
     u16 zl = *(u16 *)(p + 0x15);
     *(u16 *)(s + 0x11) = vz;                                                    /* c3ed vz */
@@ -1148,21 +1145,21 @@ void ent_boss_strafer(Entity *e, int di)
         G_ENEMY_COUNT -= 1; e->type_state = 0xFF;
         return;
     }
-    *(u16 *)(p + 0x11) = GW(0xF7F0, u16);                     /* vz = d600 */
+    *(u16 *)(p + 0x11) = Gw_engine_pitch;                     /* vz = d600 */
     *(u16 *)(p + 0x23) = (u16)((*(i16 *)(p + 0x23) + 5) & 0xff);   /* timer += 5 */
-    if (GW(0x27C7, i16) == 4) {                              /* level 5: strafing run */
+    if (Gi_stage == 4) {                              /* level 5: strafing run */
         if (G_ENEMY_COUNT == 1) *(i16 *)(p + 0x11) += 1;
         *(u16 *)(p + 0x1f) = 0x1de1;                          /* anim seg (firing pose) */
         *(u16 *)(p + 0x1d) = 0x1258;                          /* anim off */
         *(i16 *)(p + 3) -= 1;                                 /* di-- */
-        i16 s = ((const i16 *)((u8 *)&G + 0x2DD5))[*(i16 *)(p + 0x23)];        /* sin[timer] */
-        *(i16 *)(p + 7) = (i16)(GW(0xF7F2, i16) + (i16)(s - (i16)(s >> 2)));   /* x = d602 + sin*3/4 */
-        i16 c = ((const i16 *)((u8 *)&G + 0x2FD5))[*(i16 *)(p + 0x23)];        /* cos[timer] */
+        i16 s = ffd_sine_lut[*(i16 *)(p + 0x23)];        /* sin[timer] */
+        *(i16 *)(p + 7) = (i16)(Gi_engine_x + (i16)(s - (i16)(s >> 2)));   /* x = d602 + sin*3/4 */
+        i16 c = ffd_cosine_lut[*(i16 *)(p + 0x23)];        /* cos[timer] */
         c = (i16)(c - (i16)(c >> 2));
         if (c < 0) c = (i16)(-c);
         *(i16 *)(p + 5) = (i16)(c + 0x28);                    /* screen_y = |cos*3/4| + 0x28 */
         if (di < 0xb4) {
-            i16 dx = (i16)(GW(0xDD84, i16) * 2 - *(i16 *)(p + 7));
+            i16 dx = (i16)(Gi_car_x * 2 - *(i16 *)(p + 7));
             if (dx < 0x19 && dx > -0x19) {                    /* over the player: FIRE */
                 *(i16 *)(p + 0x11) += 6;
                 { u16 zl=*(u16*)(p+0x15); *(u16*)(p+0x15)=(u16)(zl-1); *(u16*)(p+0x17)-=(u16)(zl==0); }
@@ -1178,9 +1175,9 @@ void ent_boss_strafer(Entity *e, int di)
             i16 x = *(i16 *)(p + 7);
             *(i16 *)(p + 0x23) = (i16)((x << 2) + x);         /* timer = x_accum*5 */
         }
-        *(i16 *)(p + 7) = (i16)(((const i16 *)((u8 *)&G + 0x2DD5))[*(i16 *)(p + 0x23)] >> 1);
-        *(i16 *)(p + 3) += (i16)(((const i16 *)((u8 *)&G + 0x2FD5))[*(i16 *)(p + 0x23)] >> 4);
-        i16 targY = (i16)(0x87 - GW(0xDD86, i16));
+        *(i16 *)(p + 7) = (i16)(ffd_sine_lut[*(i16 *)(p + 0x23)] >> 1);
+        *(i16 *)(p + 3) += (i16)(ffd_cosine_lut[*(i16 *)(p + 0x23)] >> 4);
+        i16 targY = (i16)(0x87 - Gi_horizon);
         if (targY > 100) targY = 100;
         *(i16 *)(p + 0x13) = (i16)((targY - *(i16 *)(p + 5)) >> 1);
         if (p[0x30] != 0) {                                   /* hit this frame: FIRE */
@@ -1218,27 +1215,27 @@ void ent_kamikaze(Entity *e, int di)
         ent_die(e);
         return;
     }
-    if ((i16)GW(0xDC68, i16) < 0) *(u16 *)(p + 0x21) = 2;    /* aim_target<0 -> retreat */
+    if ((i16)Gi_lives < 0) *(u16 *)(p + 0x21) = 2;    /* aim_target<0 -> retreat */
     i16 st = *(i16 *)(p + 0x21);
     if (st == 0) {                                           /* HOME */
-        i16 vx = (i16)((GW(0xDD84, i16) * 2 - *(i16 *)(p + 7)) >> 1);
-        i16 vy = (i16)(((0xa0 - GW(0xDD86, i16)) - *(i16 *)(p + 5)) >> 1);
+        i16 vx = (i16)((Gi_car_x * 2 - *(i16 *)(p + 7)) >> 1);
+        i16 vy = (i16)(((0xa0 - Gi_horizon) - *(i16 *)(p + 5)) >> 1);
         *(i16 *)(p + 0x0f) = vx;
         *(i16 *)(p + 0x13) = vy;
         if (*(i16 *)(p + 3) < 1) {                           /* at the player line */
             if (vx == 0 && vy == 0) {                        /* locked on: DIVE */
-                *(i16 *)(p + 0x11) = GW(0xE9CC, i16);
+                *(i16 *)(p + 0x11) = Gi_speed;
                 *(u16 *)(p + 3) = 0xffff;
-                GW(0xF085, u16) = *(u16 *)(p + 0x1b);        /* ce95 cockpit flash */
-                GW(0xDE67, u16) = (u16)(GW(0xDD84, i16) + 0xa0);   /* bc77 */
-                GW(0xDE6B, u16) = (u16)(GW(0xDD86, i16) - 8);      /* bc7b */
+                Gw_cflash_spr = *(u16 *)(p + 0x1b);        /* ce95 cockpit flash */
+                Gw_cflash_x = (u16)(Gi_car_x + 0xa0);   /* bc77 */
+                Gw_cflash_y = (u16)(Gi_horizon - 8);      /* bc7b */
                 *(u16 *)(p + 0x21) = 1;
             } else {
-                *(i16 *)(p + 0x11) = (i16)(GW(0xE9CC, i16) + 2);
+                *(i16 *)(p + 0x11) = (i16)(Gi_speed + 2);
                 *(u16 *)(p + 3) = 0x0000;
             }
         } else {
-            *(i16 *)(p + 0x11) = (i16)(GW(0xE9CC, i16) - 3);
+            *(i16 *)(p + 0x11) = (i16)(Gi_speed - 3);
         }
     } else if (st == 1) {                                   /* STRIKE window */
         i16 t = *(i16 *)(p + 0x23);
@@ -1246,28 +1243,28 @@ void ent_kamikaze(Entity *e, int di)
         if (t > 0x1c) {
             if (*(i16 *)(p + 0x23) == 0x1e) {
                 *(i16 *)(p + 0x1b) += 10;
-                GW(0xDC6C, i16) -= 8;                        /* ba7c invuln_timer -= 8 */
-                if ((i16)GW(0xDC6C, i16) < 0) GW(0xDC6C, i16) = 0;
+                Gi_fuel_window -= 8;                        /* ba7c invuln_timer -= 8 */
+                if ((i16)Gi_fuel_window < 0) Gi_fuel_window = 0;
             } else if (*(i16 *)(p + 0x23) > 0x32) {          /* wrap behind the player */
                 *(u16 *)(p + 0x21) = 2;
                 *(u16 *)(p + 3) = 0x0000;
-                *(u16 *)(p + 0x15) = GW(0xEA3C, u16);        /* z_pos = camera */
-                *(u16 *)(p + 0x17) = GW(0xEA3E, u16);
-                *(i16 *)(p + 0x11) = (i16)(GW(0xE9CC, i16) + 2);
-                *(i16 *)(p + 5) = (i16)(0xa0 - GW(0xDD86, i16));
-                *(i16 *)(p + 7) = (i16)(GW(0xDD84, i16) << 1);
-                *(i16 *)(p + 1) = (i16)(*(i16 *)(p + 7) - GW(0xDD84, i16));
+                *(u16 *)(p + 0x15) = Gw_dist_lo;        /* z_pos = camera */
+                *(u16 *)(p + 0x17) = Gw_dist_hi;
+                *(i16 *)(p + 0x11) = (i16)(Gi_speed + 2);
+                *(i16 *)(p + 5) = (i16)(0xa0 - Gi_horizon);
+                *(i16 *)(p + 7) = (i16)(Gi_car_x << 1);
+                *(i16 *)(p + 1) = (i16)(*(i16 *)(p + 7) - Gi_car_x);
             }
         }
         if (*(i16 *)(p + 0x21) < 2) {                        /* still striking */
-            *(i16 *)(p + 0x11) = GW(0xE9CC, i16);
+            *(i16 *)(p + 0x11) = Gi_speed;
             *(u16 *)(p + 3) = 0xffff;
-            GW(0xF085, u16) = *(u16 *)(p + 0x1b);
-            GW(0xDE67, u16) = (u16)(GW(0xDD84, i16) + 0xa0);
-            GW(0xDE6B, u16) = (u16)(GW(0xDD86, i16) - 8);
+            Gw_cflash_spr = *(u16 *)(p + 0x1b);
+            Gw_cflash_x = (u16)(Gi_car_x + 0xa0);
+            Gw_cflash_y = (u16)(Gi_horizon - 8);
         }
     } else if (st == 2) {                                   /* RETREAT */
-        if (di < 0x12d) *(i16 *)(p + 0x11) = (i16)(GW(0xE9CC, i16) + 3);
+        if (di < 0x12d) *(i16 *)(p + 0x11) = (i16)(Gi_speed + 3);
         else { G_ENEMY_COUNT -= 1; e->type_state = 0xFF; }
     }
 }
@@ -1280,8 +1277,8 @@ void ent_mine_layer(Entity *e, int di)
     u8 *p = (u8 *)e;
     if (p[0x2f] == 0x00) { ent_die(e); return; }
     if (di < 0x12d) {
-        if ((i16)GW(0xDC68, i16) < 0) *(i16 *)(p + 0x11) += 1;
-        else *(i16 *)(p + 0x11) = (i16)(GW(0xE9CC, i16) + 1);
+        if ((i16)Gi_lives < 0) *(i16 *)(p + 0x11) += 1;
+        else *(i16 *)(p + 0x11) = (i16)(Gi_speed + 1);
         if (di < 0xf0) {
             *(i16 *)(p + 0x21) += 1;
             if ((*(u16 *)(p + 0x21) & 7) == 0) drop_mine(e);
@@ -1300,19 +1297,19 @@ void ent_side_gunner(Entity *e, int di)
     u8 *p = (u8 *)e;
     if (G_AIRCRAFT_FLAG == 0) { e->type_state = 0xFF; G_ENEMY_COUNT -= 1; return; }
     if (p[0x2f] == 0x00) { ent_die(e); return; }
-    if ((i16)GW(0xDC68, i16) < 0) *(u16 *)(p + 0x21) = 2;
+    if ((i16)Gi_lives < 0) *(u16 *)(p + 0x21) = 2;
     i16 st = *(i16 *)(p + 0x21);
     if (st == 0) {                                          /* launch */
-        *(u16 *)(p + 7) = ((i16)GW(0xDD84, i16) < 0) ? 0x40 : 0xffc0;
-        *(i16 *)(p + 1) = (i16)(*(i16 *)(p + 7) - GW(0xDD84, i16));
-        *(u16 *)(p + 3) = ((i16)GW(0xDD86, i16) < 0x46) ? 0x20 : 0x60;
-        *(i16 *)(p + 0x11) = (i16)(GW(0xE9CC, i16) + 2);
+        *(u16 *)(p + 7) = ((i16)Gi_car_x < 0) ? 0x40 : 0xffc0;
+        *(i16 *)(p + 1) = (i16)(*(i16 *)(p + 7) - Gi_car_x);
+        *(u16 *)(p + 3) = ((i16)Gi_horizon < 0x46) ? 0x20 : 0x60;
+        *(i16 *)(p + 0x11) = (i16)(Gi_speed + 2);
         *(u16 *)(p + 0x13) = 4;
         *(i16 *)(p + 0x21) += 1;
     } else if (st == 1) {                                   /* attack V-bob */
-        if (di < 0x40)      *(i16 *)(p + 0x11) = (i16)(GW(0xE9CC, i16) + 1);
-        else if (di < 0x41) *(i16 *)(p + 0x11) = GW(0xE9CC, i16);
-        else                *(i16 *)(p + 0x11) = (i16)(GW(0xE9CC, i16) - 1);
+        if (di < 0x40)      *(i16 *)(p + 0x11) = (i16)(Gi_speed + 1);
+        else if (di < 0x41) *(i16 *)(p + 0x11) = Gi_speed;
+        else                *(i16 *)(p + 0x11) = (i16)(Gi_speed - 1);
         if (*(i16 *)(p + 0x13) == 4) {
             if (*(i16 *)(p + 5) > 100) { *(u16 *)(p + 0x13) = 0xfffc; ent_fire_shot(e); }
         } else if (*(i16 *)(p + 5) < 0) {
@@ -1332,8 +1329,8 @@ void ent_bomber(Entity *e, int di)
     u8 *p = (u8 *)e;
     if (p[0x2f] == 0x00) { ent_die(e); return; }
     if (di < 0) { ent_pass_player(e); return; }
-    *(i16 *)(p + 0x11) = (i16)(GW(0xE9CC, i16) - 7);
-    *(i16 *)(p + 7) = (i16)(GW(0xDD84, i16) << 1);
+    *(i16 *)(p + 0x11) = (i16)(Gi_speed - 7);
+    *(i16 *)(p + 7) = (i16)(Gi_car_x << 1);
     if (di - 0x70 < 0) {
         *(i16 *)(p + 5) = (i16)(0x32 - (di - 0x70));
         if (*(i16 *)(p + 0x21) == 0) { *(u16 *)(p + 0x21) = 1; ent_fire_shot(e); }
@@ -1349,8 +1346,8 @@ void ent_mine_dropper(Entity *e, int di)
     u8 *p = (u8 *)e;
     if (p[0x2f] == 0x00) { ent_die(e); return; }
     if (di < 0) { ent_pass_player(e); return; }
-    *(i16 *)(p + 0x11) = (i16)(GW(0xE9CC, i16) - 5);
-    *(i16 *)(p + 7) = (i16)(GW(0xDD84, i16) << 1);
+    *(i16 *)(p + 0x11) = (i16)(Gi_speed - 5);
+    *(i16 *)(p + 7) = (i16)(Gi_car_x << 1);
     if (di - 0x70 < 0) {
         *(i16 *)(p + 5) = (i16)(0x32 - (di - 0x70));
         if (*(i16 *)(p + 0x21) == 0) { *(u16 *)(p + 0x21) = 1; drop_mine(e); }
@@ -1370,12 +1367,12 @@ void ent_descender(Entity *e, int di)
     if (di < 0) { ent_pass_player(e); return; }
     int settle = 0;
     if (di < 0xc9) {
-        i16 iv = (i16)(((0x87 - GW(0xDD86, i16)) - *(i16 *)(p + 5)) >> 1);
+        i16 iv = (i16)(((0x87 - Gi_horizon) - *(i16 *)(p + 5)) >> 1);
         if (iv < 1) settle = 1;
         else {
-            if (*(i16 *)(p + 0x11) < GW(0xE9CC, i16)) *(i16 *)(p + 0x11) += 1;
+            if (*(i16 *)(p + 0x11) < Gi_speed) *(i16 *)(p + 0x11) += 1;
             else                                      *(i16 *)(p + 0x11) -= 1;
-            *(i16 *)(p + 0x0f) = (i16)((GW(0xDD84, i16) * 2 - *(i16 *)(p + 7)) >> 1);
+            *(i16 *)(p + 0x0f) = (i16)((Gi_car_x * 2 - *(i16 *)(p + 7)) >> 1);
             *(i16 *)(p + 0x13) = iv;
         }
     } else settle = 1;
@@ -1393,23 +1390,27 @@ void ent_descender(Entity *e, int di)
 void ent_formation_leader(Entity *e, int di)
 {
     u8 *p = (u8 *)e;
-    GW(0xF7F4, u16) = (u16)((u8 *)p - (u8 *)&G);           /* d604 = leader slot offset */
-    GW(0xF7F6, u16) = 0x0000;                              /* d606 (seg; single image) */
+    Gw_leader_slot = (u16)((u8 *)p - ENT_BASE);           /* d604 = leader slot offset
+                                                            * (POOL-relative now that the
+                                                            * pool lives outside G; the
+                                                            * only reader is the follower
+                                                            * below — same slot resolved) */
+    Gw_leader_seg = 0x0000;                              /* d606 (seg; single image) */
     if (p[0x2f] == 0x00) { ent_die(e); return; }
     if (di < 0) {
-        if (G_ENEMY_COUNT == 1 || (i16)GW(0xDC68, i16) < 0) {
+        if (G_ENEMY_COUNT == 1 || (i16)Gi_lives < 0) {
             G_ENEMY_COUNT -= 1; e->type_state = 0xFF; return;
         }
         *(u16 *)(p + 3) = 0;
-        *(i16 *)(p + 0x11) = (i16)(GW(0xE9CC, i16) + 1);
+        *(i16 *)(p + 0x11) = (i16)(Gi_speed + 1);
     } else if (di < 1) {
-        *(i16 *)(p + 0x11) = GW(0xE9CC, i16);
+        *(i16 *)(p + 0x11) = Gi_speed;
     } else {
-        *(i16 *)(p + 0x11) = (i16)(GW(0xE9CC, i16) - 2);
+        *(i16 *)(p + 0x11) = (i16)(Gi_speed - 2);
     }
     if (G_ENEMY_COUNT == 1) *(i16 *)(p + 0x11) -= 2;
-    *(i16 *)(p + 0x0f) = (i16)(GW(0xDD84, i16) * 2 - *(i16 *)(p + 7));
-    *(i16 *)(p + 0x13) = (i16)((0x91 - GW(0xDD86, i16)) - *(i16 *)(p + 5));
+    *(i16 *)(p + 0x0f) = (i16)(Gi_car_x * 2 - *(i16 *)(p + 7));
+    *(i16 *)(p + 0x13) = (i16)((0x91 - Gi_horizon) - *(i16 *)(p + 5));
 }
 
 /* port 161c:1d9f — ent_formation_follower (type 42): trails the leader recorded in
@@ -1422,15 +1423,15 @@ void ent_formation_follower(Entity *e, int di)
     if (p[0x2f] == 0x00) { ent_die(e); return; }
     if (di < 0) { ent_pass_player(e); return; }
     if (G_ENEMY_COUNT == 1) {
-        *(i16 *)(p + 0x11) = (i16)(GW(0xE9CC, i16) - 8);
+        *(i16 *)(p + 0x11) = (i16)(Gi_speed - 8);
     } else {
-        u8 *lead = (u8 *)&G + GW(0xF7F4, u16);             /* d604 leader slot */
+        u8 *lead = ENT_BASE + Gw_leader_slot;             /* d604 leader slot */
         if (*(i16 *)(lead + 3) == 0) {
-            *(i16 *)(p + 0x11) = (i16)(GW(0xE9CC, i16) - 8);
+            *(i16 *)(p + 0x11) = (i16)(Gi_speed - 8);
             *(u16 *)(p + 7) = *(u16 *)(lead + 7);
             *(i16 *)(p + 5) = (i16)(*(i16 *)(lead + 5) - 10);
         } else {
-            *(i16 *)(p + 0x11) = GW(0xE9CC, i16);
+            *(i16 *)(p + 0x11) = Gi_speed;
         }
     }
 }
@@ -1443,20 +1444,20 @@ void ent_formation_follower(Entity *e, int di)
 void pickup_weapon(Entity *e, int di)
 {
     u8 *p = (u8 *)e;
-    if (GW(0xDC6A, u8) == 0 || di > 300) {                 /* ba7a inactive / too far */
+    if (Gb_carrier_flag == 0 || di > 300) {                 /* ba7a inactive / too far */
         G_ENEMY_COUNT -= 1; e->type_state = 0xFF;
     } else if (p[0x2f] == 0x00) {                          /* shot */
         ent_morph_explosion(e);
-        GW(0xDC6A, u8) = 0;
+        Gb_carrier_flag = 0;
     } else if (di < 0) {                                   /* collected */
-        if (ent_hit_player_wide(e) && (i16)GW(0xDC68, i16) < 4) {
-            GW(0xDC68, i16) += 1;                          /* weapon level++ */
-            GW(0xEF56, u16) = 0x14;                        /* cd66 pickup banner */
+        if (ent_hit_player_wide(e) && (i16)Gi_lives < 4) {
+            Gi_lives += 1;                          /* weapon level++ */
+            Gw_pickup_banner = 0x14;                        /* cd66 pickup banner */
         }
-        GW(0xDC6A, u8) = 0;
+        Gb_carrier_flag = 0;
         G_ENEMY_COUNT -= 1; e->type_state = 0xFF;
     } else {                                               /* airborne bob */
-        *(u16 *)(p + 0x11) = (GW(0xF6AF, u16) == 0) ? 0x14 : 0x1c;
+        *(u16 *)(p + 0x11) = (Gw_game_mode == 0) ? 0x14 : 0x1c;
         if (*(i16 *)(p + 5) < 1) {
             p[0x2f] -= 1;
             *(i16 *)(p + 0x13) = (i16)(-*(i16 *)(p + 0x13));
@@ -1474,12 +1475,12 @@ void ent_strafer_layer(Entity *e, int di)
     u8 *p = (u8 *)e;
     if (p[0x2f] == 0x00) { ent_die(e); return; }
     if (di < 0x12d) {
-        if (di < 0x3c || GW(0xDC6C, u16) == 0) {
-            *(i16 *)(p + 0x11) = (i16)(GW(0xE9CC, i16) + 1);
+        if (di < 0x3c || Gw_fuel_window == 0) {
+            *(i16 *)(p + 0x11) = (i16)(Gi_speed + 1);
         } else {
-            if (di > 0x3c) *(i16 *)(p + 0x11) = (i16)(GW(0xE9CC, i16) - 1);
+            if (di > 0x3c) *(i16 *)(p + 0x11) = (i16)(Gi_speed - 1);
             *(u16 *)(p + 0x23) = (u16)((*(i16 *)(p + 0x23) + 5) & 0xff);
-            *(i16 *)(p + 7) = (i16)(((const i16 *)((u8 *)&G + 0x2DD5))[*(i16 *)(p + 0x23)] >> 1);
+            *(i16 *)(p + 7) = (i16)(ffd_sine_lut[*(i16 *)(p + 0x23)] >> 1);
             *(i16 *)(p + 0x21) += 1;
             if ((*(u16 *)(p + 0x21) & 7) == 0) drop_mine(e);
         }
@@ -1497,16 +1498,16 @@ void ent_boss_sweeper(Entity *e, int di)
     u8 *p = (u8 *)e;
     if (p[0x2f] == 0x00) { ent_die(e); return; }
     if (di < 0) { ent_pass_player(e); return; }
-    if (GW(0x27C7, i16) == 4) {
-        *(i16 *)(p + 0x11) = (i16)(GW(0xE9CC, i16) - 3);
+    if (Gi_stage == 4) {
+        *(i16 *)(p + 0x11) = (i16)(Gi_speed - 3);
         if (p[0x30] != 0) { p[0x30] = 0; ent_fire_shot(e); }
         i16 y = (i16)((di & 0x3f) * 2);
         if (di & 0x40) y = (i16)((di & 0x3f) * -2 + 0x80);
         *(i16 *)(p + 5) = y;
     } else {
-        *(i16 *)(p + 0x11) = (i16)(GW(0xE9CC, i16) - 2);
+        *(i16 *)(p + 0x11) = (i16)(Gi_speed - 2);
         *(u16 *)(p + 0x21) = (u16)((*(i16 *)(p + 0x21) + 7) & 0xff);
-        *(i16 *)(p + 5) = (i16)((((const i16 *)((u8 *)&G + 0x2FD5))[*(i16 *)(p + 0x21)] >> 2) + 0x3c);
+        *(i16 *)(p + 5) = (i16)((ffd_cosine_lut[*(i16 *)(p + 0x21)] >> 2) + 0x3c);
     }
 }
 
@@ -1517,11 +1518,11 @@ void ent_sine_flyer(Entity *e, int di)
     u8 *p = (u8 *)e;
     if (p[0x2f] == 0x00) { ent_die(e); return; }
     if (di < 0) { ent_pass_player(e); return; }
-    *(i16 *)(p + 0x11) = (i16)(GW(0xE9CC, i16) - 2);
+    *(i16 *)(p + 0x11) = (i16)(Gi_speed - 2);
     *(u16 *)(p + 0x21) = (u16)((*(i16 *)(p + 0x21) + 7) & 0xff);
     i16 ph = *(i16 *)(p + 0x21);
-    *(i16 *)(p + 5) = (i16)((((const i16 *)((u8 *)&G + 0x2FD5))[ph] >> 2) + 0x3c);
-    *(i16 *)(p + 7) = (i16)(((const i16 *)((u8 *)&G + 0x2DD5))[ph] >> 1);
+    *(i16 *)(p + 5) = (i16)((ffd_cosine_lut[ph] >> 2) + 0x3c);
+    *(i16 *)(p + 7) = (i16)(ffd_sine_lut[ph] >> 1);
 }
 
 /* port 161c:2203 — ent_sine_gunner (type 53): like the sine flyer but the wobble
@@ -1533,10 +1534,10 @@ void ent_sine_gunner(Entity *e, int di)
     if (di < 0) { ent_pass_player(e); return; }
     *(u16 *)(p + 0x21) = (u16)((*(i16 *)(p + 0x21) + 5) & 0xff);
     i16 ph = *(i16 *)(p + 0x21);
-    *(i16 *)(p + 0x11) = (i16)(GW(0xE9CC, i16) - 2);
-    *(i16 *)(p + 0x11) += (i16)(((const i16 *)((u8 *)&G + 0x2FD5))[ph] >> 7);
-    *(i16 *)(p + 7) = (i16)(((const i16 *)((u8 *)&G + 0x2DD5))[ph] >> 1);
-    if (GW(0x27C7, i16) == 4 && di < 0x96) {
+    *(i16 *)(p + 0x11) = (i16)(Gi_speed - 2);
+    *(i16 *)(p + 0x11) += (i16)(ffd_cosine_lut[ph] >> 7);
+    *(i16 *)(p + 7) = (i16)(ffd_sine_lut[ph] >> 1);
+    if (Gi_stage == 4 && di < 0x96) {
         u16 t = *(u16 *)(p + 0x23);
         *(u16 *)(p + 0x23) = (u16)(t + 1);
         if ((t & 0x1f) == 0) ent_fire_shot(e);
@@ -1556,7 +1557,7 @@ void enemy_update_enqueue_top(Entity *e, int di)
         *(u16 *)(p + 5) = 0;
         u8 *s = free_slot14();
         if (s) {
-            memcpy(s, (u8 *)&G + 0x2183, 0x33);            /* hatch proto @0x2183 */
+            memcpy(s, &g_protos[65], 0x33);                /* hatch proto (was @0x2183) */
             *(u16 *)(s + 7)    = *(u16 *)(p + 7);
             *(u16 *)(s + 1)    = *(u16 *)(p + 1);
             *(u16 *)(s + 3)    = *(u16 *)(p + 3);
@@ -1586,10 +1587,10 @@ void enemy_update_home_player(Entity *e, int di)
     if (p[0x2f] == 0x00) { ent_die(e); return; }
     if (di < 0) { ent_pass_player(e); return; }
     *(u16 *)(p + 0x1b) = 0;
-    *(i16 *)(p + 0x11) = (i16)(GW(0xE9CC, i16) - 7);
-    i16 vx = (di < 100) ? (i16)((GW(0xDD84, i16) * 2 - *(i16 *)(p + 7)) >> 1) : 0;
+    *(i16 *)(p + 0x11) = (i16)(Gi_speed - 7);
+    i16 vx = (di < 100) ? (i16)((Gi_car_x * 2 - *(i16 *)(p + 7)) >> 1) : 0;
     *(i16 *)(p + 0x0f) = vx;
-    *(i16 *)(p + 0x13) = (i16)(((0x87 - GW(0xDD86, i16)) - *(i16 *)(p + 5)) >> 1);
+    *(i16 *)(p + 0x13) = (i16)(((0x87 - Gi_horizon) - *(i16 *)(p + 5)) >> 1);
 }
 
 /* port 161c:2a86 — enemy_update_bounce (type 69): a grounded hopper. state_phase 0
@@ -1628,18 +1629,18 @@ void enemy_update_charge_trigger(Entity *e, int di)
     u8 *p = (u8 *)e;
     if (*(i16 *)(p + 0x23) == 0) {
         p[0x2e] = 0;
-        *(u16 *)(p + 0x11) = GW(0xE9CC, u16);
+        *(u16 *)(p + 0x11) = Gw_speed;
         if (di < 0x1f) {
             if (di < 0x19) *(i16 *)(p + 0x11) += 1;
             p[0x2e] = 6;
             i16 ph = *(i16 *)(p + 0x21);
             *(i16 *)(p + 0x21) = (i16)(ph + 1);
-            if (ph > 0x1e) { *(i16 *)(p + 0x23) += 1; GW(0xF6C8, u16) = 1; }
+            if (ph > 0x1e) { *(i16 *)(p + 0x23) += 1; Gw_charge_flag = 1; }
         } else {
             *(i16 *)(p + 0x11) -= 2;
         }
     } else if (*(i16 *)(p + 0x23) == 1) {
-        *(u16 *)(p + 0x1b) = GW(0xF6C8, u16);
+        *(u16 *)(p + 0x1b) = Gw_charge_flag;
         *(u16 *)(p + 0x11) = 0;
     }
 }

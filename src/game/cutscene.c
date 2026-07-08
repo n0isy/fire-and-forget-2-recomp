@@ -42,7 +42,7 @@
  * rows 0..PF_Y-1 around it (the original never repaints the HUD here).
  */
 #include "ff_game.h"
-#include "gmem.h"
+#include "gnames.h"
 #include <string.h>
 
 #define PF_Y 48
@@ -71,10 +71,10 @@ static const u8  rk_act[6] = { 2, 0, 1, 0, 1, 0 };   /* 0=e++, 1=c++, 2=ctr0+e++
 static void pool_reset_19e7(void)
 {
     for (int si = 0x0F; si < 0x14; ++si)
-        memcpy(GPTR(0xE5CC + si * 0x33), GPTR(0x1490), 0x33);
+        memcpy(ENT_BASE + si * 0x33, Gp_proto_gun, 0x33);
     for (int si = 0; si < 0x14; ++si) {
-        GB(0xE5CC + si * 0x33 + 0x00) = 0xFF;
-        GB(0xE5CC + si * 0x33 + 0x2E) = 0x00;
+        *(ENT_BASE + si * 0x33 + 0x00) = 0xFF;
+        *(ENT_BASE + si * 0x33 + 0x2E) = 0x00;
     }
 }
 
@@ -83,9 +83,9 @@ static void rt_begin_rise(void)
 {
     if (!fl_rocket)                              /* fn0A0D_0ADB: load + register NUC  */
         sprite_dir_register_bank2();             /* (GC.nuc loaded at game_init)      */
-    GB(0xDE52) = 0x01;                           /* arm the typewriter                */
-    GB(0xDE50) = 0x0A;                           /* msg 10 = the X/O tic-tac-toe grid */
-    rt_spr     = (i16)GW(0xEF52);                /* NUC frames tEF52+0 .. tEF52+10    */
+    Gb_panel_state = 0x01;                           /* arm the typewriter                */
+    Gb_panel_msg = 0x0A;                           /* msg 10 = the X/O tic-tac-toe grid */
+    rt_spr     = (i16)Gw_spr_count;                /* NUC frames tEF52+0 .. tEF52+10    */
     rt_spr_end = rt_spr + 0x0B;
     rt_ctr     = 0;
     rt_state   = RT_RISE;
@@ -95,25 +95,25 @@ static void rt_begin_rise(void)
  * death branch, right after tEA3A--. */
 void round_transition_start(void)
 {
-    if (GB(0xF6B3) != 0x00) { rt_state = RT_OFF; return; }   /* demo aborted: skip */
+    if (Gb_demo_abort != 0x00) { rt_state = RT_OFF; return; }   /* demo aborted: skip */
 
-    GB(0x24F3) = 0x98;                           /* playfield height (t24F3.u0)  */
+    Gb_playfield_h = 0x98;                           /* playfield height (t24F3.u0)  */
     /* tDE57 += 0x780 — VRAM page base bookkeeping, not modelled (chunky fb)   */
-    GW(0xEF52) = GW(0xDE69);                     /* tEF52 = tDE69                */
+    Gw_spr_count = Gw_spr_count_saved;                     /* tEF52 = tDE69                */
     ff_poll_controls();                          /* fn0A0D_0002                  */
-    if (GW(0x24B7) != 0 && GW(0x24B9) != 0 && GW(0xEA3A) == 0)
-        GW(0x27C7) = 0x04;                       /* fire+aux, no credits: finale */
+    if (Gw_btn_fire != 0 && Gw_btn_start != 0 && Gw_credits == 0)
+        Gw_stage = 0x04;                       /* fire+aux, no credits: finale */
 
     fl_rearm = fl_done = fl_rocket = 0;
     fl_y = 0x57;
     fl_phase = -1;
 
-    if (GW(0x27C7) == 0x04) {                    /* THE FINALE (bad ending)      */
-        GW(0x27C7) = 0x05;                       /* wave script dir[5]           */
+    if (Gw_stage == 0x04) {                    /* THE FINALE (bad ending)      */
+        Gw_stage = 0x05;                       /* wave script dir[5]           */
         vm_arm();                                /* fn0BA8_13FD(1)               */
-        if ((i16)GW(0xF480) > 0x04) GW(0xF480) = 0x00;
-        GW(0xF6C8) = 0x00;                       /* d4d8 charge trigger          */
-        GW(0xE9CC) = 0x00;                       /* speed 0                      */
+        if ((i16)Gw_track_seg > 0x04) Gw_track_seg = 0x00;
+        Gw_charge_flag = 0x00;                       /* d4d8 charge trigger          */
+        Gw_speed = 0x00;                       /* speed 0                      */
         rt_state = RT_FINALE;
         return;
     }
@@ -150,42 +150,42 @@ static void rocket_enqueue(void)
 /* one frame of the FINALE loop (fn0BA8_048A LAB_13a8_084b body) */
 static void finale_frame(void)
 {
-    if (GW(0xF46A) == 0 && !fl_rearm) {          /* pool cleared: re-arm script 5 */
+    if (Gw_enemy_count == 0 && !fl_rearm) {          /* pool cleared: re-arm script 5 */
         fl_rearm = 1;
         vm_arm();
     }
-    if (GW(0xF6C8) != 0) {                       /* charge armed: brake to 0      */
-        if (GW(0xE9CC) != 0) GW(0xE9CC) -= 1;
-    } else if ((i16)GW(0xE9CC) < 3) {
-        GW(0xE9CC) += 1;                         /* cruise up to speed 3          */
+    if (Gw_charge_flag != 0) {                       /* charge armed: brake to 0      */
+        if (Gw_speed != 0) Gw_speed -= 1;
+    } else if ((i16)Gw_speed < 3) {
+        Gw_speed += 1;                         /* cruise up to speed 3          */
     }
     /* fn0BA8_203A displist reset — handled inside render_entities()            */
     {
-        u32 acc = ((u32)GW(0xEA3E) << 16) | GW(0xEA3C);
-        acc += GW(0xE9CC);
-        GW(0xEA3C) = (u16)acc; GW(0xEA3E) = (u16)(acc >> 16);
+        u32 acc = ((u32)Gw_dist_hi << 16) | Gw_dist_lo;
+        acc += Gw_speed;
+        Gw_dist_lo = (u16)acc; Gw_dist_hi = (u16)(acc >> 16);
     }
-    if ((i16)GW(0xDD84) > 0)      GW(0xDD84) -= 1;   /* steer decays to centre  */
-    else if ((i16)GW(0xDD84) < 0) GW(0xDD84) += 1;
-    if ((i16)GW(0xF1FD) > 0xA0)      GW(0xF1FD) -= 1;
-    else if ((i16)GW(0xF1FD) < 0xA0) GW(0xF1FD) += 1;
+    if ((i16)Gw_car_x > 0)      Gw_car_x -= 1;   /* steer decays to centre  */
+    else if ((i16)Gw_car_x < 0) Gw_car_x += 1;
+    if ((i16)Gw_road_center > 0xA0)      Gw_road_center -= 1;
+    else if ((i16)Gw_road_center < 0xA0) Gw_road_center += 1;
     {
         /* iVar6 = (curve * speed) >> 2 — NB shift AFTER the multiply here      */
-        i16 iv = (i16)(((i16)((i8)track_curve_now()) * (i16)GW(0xE9CC)) >> 2);
-        i16 wx = (i16)((i16)GW(0xEF50) + iv);
+        i16 iv = (i16)(((i16)((i8)track_curve_now()) * (i16)Gw_speed) >> 2);
+        i16 wx = (i16)((i16)Gw_mtn_scroll + iv);
         if (wx < 0)            wx = (i16)(wx + 0x2800);
         else if (wx >= 0x2800) wx = (i16)(wx - 0x2800);
-        GW(0xEF50) = (u16)wx;
+        Gw_mtn_scroll = (u16)wx;
         /* aF689[(wEF50>>4) & 3] strip select — the finale masks &3 (ghidra     *
          * @3990), unlike run_level's &7; draw_mountains honours g_mtn_mask.    */
-        GW(0xEA48) = (u16)(GW(0xEA48) + (u16)(iv << 6));
-        GW(0xEA46) = (u16)(GW(0xEA46) + (u16)(iv * 0x35));
-        GW(0xEA44) = (u16)(GW(0xEA44) + (u16)(iv * 0x33));
-        GW(0xEA42) = (u16)(GW(0xEA42) + (u16)(iv * 0x2A));
-        GW(0xEA40) = (u16)(GW(0xEA40) + (u16)(iv << 5));
+        Gw_cloud_acc4 = (u16)(Gw_cloud_acc4 + (u16)(iv << 6));
+        Gw_cloud_acc3 = (u16)(Gw_cloud_acc3 + (u16)(iv * 0x35));
+        Gw_cloud_acc2 = (u16)(Gw_cloud_acc2 + (u16)(iv * 0x33));
+        Gw_cloud_acc1 = (u16)(Gw_cloud_acc1 + (u16)(iv * 0x2A));
+        Gw_cloud_acc0 = (u16)(Gw_cloud_acc0 + (u16)(iv << 5));
     }
     {
-        int phase = GW(0xEA3C) & 0x30;
+        int phase = Gw_dist_lo & 0x30;
         if (fl_phase != phase) { track_advance(); fl_phase = phase; }
     }
     /* fn0869_15D6 build + fn10EF_0008/0051/039F/0307 draw = render_world();    *
@@ -206,13 +206,13 @@ static void finale_frame(void)
     render_entities();                           /* décor + pool + rocket, 1C73  */
     g_dl_extra = 0;
     /* flip + fn1187_0136 = the caller presents this frame                      */
-    if (GW(0xE9CC) != 0) GW(0x24FF) ^= 0x01;     /* blink parity                 */
-    if (GW(0xF6C8) != 0 && !fl_rocket) {         /* charge fired: load the NUC   */
+    if (Gw_speed != 0) Gw_blink ^= 0x01;     /* blink parity                 */
+    if (Gw_charge_flag != 0 && !fl_rocket) {         /* charge fired: load the NUC   */
         fl_rocket = 1;
         sprite_dir_register_bank2();             /* fn0A0D_0ADB                  */
-        GW(0xF6C8) = (u16)(GW(0xEF52) + 19);
-        fl_e = (i16)GW(0xEF52) + 0x0C;           /* rocket frame                 */
-        fl_c = (i16)GW(0xEF52) + 0x10;           /* flame frame                  */
+        Gw_charge_flag = (u16)(Gw_spr_count + 19);
+        fl_e = (i16)Gw_spr_count + 0x0C;           /* rocket frame                 */
+        fl_c = (i16)Gw_spr_count + 0x10;           /* flame frame                  */
     }
     rt_ctr += 1;                                 /* the bBCBC tick               */
 }
@@ -273,7 +273,7 @@ int round_transition_frame(void)
     case RT_FINALE:
         finale_frame();
         if (fl_done) {                           /* rocket burst finished        */
-            GW(0x27C7) -= 1;                     /* t27C7 back to 4              */
+            Gw_stage -= 1;                     /* t27C7 back to 4              */
             rt_begin_rise();
         }
         return 1;
@@ -283,7 +283,7 @@ int round_transition_frame(void)
         if (rt_ctr >= 3) {                       /* while (*tF205 < 3) hold      */
             rt_spr += 1;
             if (rt_spr >= rt_spr_end) {          /* loop done: the exit tail     */
-                GB(0x24F3) = 0xF8;               /* t24F3 restored               */
+                Gb_playfield_h = 0xF8;               /* t24F3 restored               */
                 /* tDE57 -= 0x780 — page bookkeeping, not modelled              */
                 rt_ctr = 0;
                 rt_state = RT_EXIT;

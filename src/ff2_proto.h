@@ -2,7 +2,12 @@
 #define FF2_PROTO_H
 
 #include "ff2_types.h"
-#include "ff2_globals.h"
+
+/* HISTORICAL SIGNATURES: the decompiled 16-bit functions took the DGROUP
+ * pointer (`struct Globals *ds`). The DGROUP image no longer exists in the
+ * port (fully de-DGROUP'd into typed blocks); the incomplete type below only
+ * keeps these reference prototypes compiling. */
+struct Globals;
 
 /* Prototypes for all reverse-engineered FF2 functions.
  * Signatures simplified from Reko / Ghidra decompiler output:

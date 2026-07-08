@@ -1,6 +1,7 @@
 /* game_app.c — entry point for the playable level build (native + WASM + headless). */
 #include "game/ff_game.h"
-#include "game/gmem.h"
+#include "game/gnames.h"
+#include "game/data/gamedata.h"   /* ffd_txt_* named game strings */
 #include "render/ff_font.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,10 +19,10 @@ static int g_interlude;   /* frames left to hold a stage-clear interlude screen 
  * from the same pre-race state (run_level_init already ran in game_init;
  * these flags are read per frame by panel_objective_triggers / run_level). */
 static void attract_state(void) {
-    GB(0xDC6F) = 0x01;
-    GW(0xEA3A) = 0x01;
-    GW(0xDC68) = 0x04;                  /* lives = 4 (menu/game-start, carries stages) */
-    GW(0x27C9) = 0x00; GW(0x27CB) = 0x00;  /* score = 0 at game start (carries stages) */
+    Gb_demo_flag = 0x01;
+    Gw_credits = 0x01;
+    Gw_lives = 0x04;                  /* lives = 4 (menu/game-start, carries stages) */
+    Gw_score_lo = 0x00; Gw_score_hi = 0x00;  /* score = 0 at game start (carries stages) */
 }
 
 /* One presented frame: the boot front-end (TITUS -> PRES -> title/menu) owns
@@ -63,7 +64,7 @@ static void frame(void) {
      * frontend_post_race() (attract loop / GAME OVER). */
     if (!frontend_frame()) {
         if (!run_level_frame()) {
-            if (GB(0xDC6E) != 0 && frontend_stage_advance())
+            if (Gb_stage_clear != 0 && frontend_stage_advance())
                 g_interlude = 40;                 /* hold the stage-clear interlude */
             else
                 frontend_post_race();
@@ -90,7 +91,7 @@ int main(int argc, char **argv) {
             if (!fe) {
                 if (!run_level_frame()) {
                     printf("  @%-6d RACE %d ENDED (DE50=%d DC6E=%d EA3A=%d 27C7=%d) -> post-race\n",
-                           i, races + 1, GB(0xDE50), GB(0xDC6E), GW(0xEA3A), GW(0x27C7));
+                           i, races + 1, Gb_panel_msg, Gb_stage_clear, Gw_credits, Gw_stage);
                     frontend_post_race();
                     races++;
                 }
@@ -116,11 +117,11 @@ int main(int argc, char **argv) {
             if (!fe) {
                 if (run_level_frame()) {
                     printf("D,%d,%d,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
-                        race, rf, GW(0xEA3C), GW(0xE9CC), GD(0xF6C4), GW(0xDD84), GW(0xDD86),
-                        GB(0xDE50), GB(0xDE51), GB(0xDE52), GW(0xDE53), GB(0xF461), GB(0xF6EC),
-                        GW(0xF682), GW(0xF6AF), GW(0x27C9), GW(0x27CB), GW(0xEF50), GB(0xF688),
-                        GW(0x24F1), GW(0xF468), GW(0xDC7E), GW(0xEF4A), GW(0xDE5D),
-                        GW(0x379F), GW(0xF6D8), GW(0xF46A), GW(0xDC6C));
+                        race, rf, Gw_dist_lo, Gw_speed, Gd_objective, Gw_car_x, Gw_horizon,
+                        Gb_panel_msg, Gb_panel_delay, Gb_panel_state, Gw_panel_cursor, Gb_rle_count, Gb_input_mask,
+                        Gw_rle_ptr, Gw_game_mode, Gw_score_lo, Gw_score_hi, Gw_mtn_scroll, Gb_obj_done,
+                        Gw_tick_timer, Gw_decor_density, Gw_decor_count, Gw_ring_head, Gw_ring_tail,
+                        Gw_decor_kind_cur, Gw_decor_latch, Gw_enemy_count, Gw_fuel_window);
                     rf++;
                 } else {
                     frontend_post_race();
@@ -149,15 +150,15 @@ int main(int argc, char **argv) {
         int hpov = (argc >= 7) ? atoi(argv[6]) : -1;  /* optional hp override (death-branch test) */
         game_init(assets);
         frontend_reset(assets);
-        GB(0xDC6F) = 0x00; GW(0xEA3A) = 0x01; GW(0xDC68) = 0x04;
-        GW(0x27C9) = 0x00; GW(0x27CB) = 0x00;
+        Gb_demo_flag = 0x00; Gw_credits = 0x01; Gw_lives = 0x04;
+        Gw_score_lo = 0x00; Gw_score_hi = 0x00;
         /* L3-L5 content test (FF2_STAGE env): inject t27C7 = stage and re-run
          * the run_level prologue (re-arms the wave VM with script dir[stage] +
          * rebuilds the palette) — mirrors the QEMU-side injection at the
          * run_level ENTRY (cap_spawntest.py STAGE env). Décor stays DECA in
          * BOTH engines (the reload lives in the menu/start_level path). */
         { const char *e = getenv("FF2_STAGE");
-          if (e) { GW(0x27C7) = (u16)atoi(e); run_level_init(); } }
+          if (e) { Gw_stage = (u16)atoi(e); run_level_init(); } }
         demo_input_set_tape(tape, (int)tlen);
         int slot = -1;
         /* per frame: a 'G' globals line (DE50 = the LEADER-SHOT-DOWN panel msg, DC6E anim_step),
@@ -168,18 +169,18 @@ int main(int argc, char **argv) {
             if (!run_level_frame()) break;
             if (f == sf) {                          /* inject the test enemy */
                 for (int k = 0; k < 20; k++)
-                    if ((i8)GB(0xE5CC + k * 0x33) < 0) { slot = k; break; }
+                    if ((i8)*(ENT_BASE + k * 0x33) < 0) { slot = k; break; }
                 if (type >= 0) {
                     unsigned char rec[5] = { (unsigned char)type, 0xC8, 0x00, 0x00, 0x10 };
                     spawn_enemy_rec(rec);
-                    if (hpov >= 0 && slot >= 0) GB(0xE5CC + slot*0x33 + 0x2f) = (u8)hpov;  /* hp override */
+                    if (hpov >= 0 && slot >= 0) *(ENT_BASE + slot*0x33 + 0x2f) = (u8)hpov;  /* hp override */
                 }
                 fprintf(stderr, "spawned type %d in slot %d @frame %d hp=%d\n", type, slot, f,
-                        slot >= 0 ? GB(0xE5CC + slot*0x33 + 0x2f) : -1);
+                        slot >= 0 ? *(ENT_BASE + slot*0x33 + 0x2f) : -1);
             }
             if (f >= sf) {                          /* dump globals + the FULL active pool every frame */
-                printf("G,%d,%d,%d,%d,%u,%u,%d,%d,%d\n", f, GB(0xDE50), GB(0xDC6E), (i16)GW(0xF46A),
-                       GW(0x27C9), GW(0xEA3C), (i16)GW(0xDC6C), GW(0xF6AF), (i16)GW(0xDC68));
+                printf("G,%d,%d,%d,%d,%u,%u,%d,%d,%d\n", f, Gb_panel_msg, Gb_stage_clear, (i16)Gw_enemy_count,
+                       Gw_score_lo, Gw_dist_lo, (i16)Gw_fuel_window, Gw_game_mode, (i16)Gw_lives);
                 /* hidden-field debug line (FF2_XDUMP=lo:hi): the crash-decision
                  * inputs — flash timer F6A9, hit flag F6B1, crash ctr DE6D,
                  * steering DD84, flash colour F203 + slot-0 x_accum (+7). */
@@ -187,11 +188,11 @@ int main(int argc, char **argv) {
                   if (xlo == -2) { const char *e = getenv("FF2_XDUMP");
                                    if (!e || sscanf(e, "%d:%d", &xlo, &xhi) != 2) { xlo = xhi = -1; } }
                   if (f >= xlo && f <= xhi)
-                      printf("X,%d,%d,%d,%d,%d,%d,%d\n", f, (i16)GW(0xF6A9), GB(0xF6B1),
-                             GB(0xDE6D), (i16)GW(0xDD84), (i16)GW(0xF203),
-                             (i16)*(u16 *)((u8 *)&G + 0xE5CC + 7)); }
+                      printf("X,%d,%d,%d,%d,%d,%d,%d\n", f, (i16)Gw_flash_timer, Gb_player_hit,
+                             Gb_crash_ctr, (i16)Gw_car_x, (i16)Gw_flash_colour,
+                             (i16)*(u16 *)(ENT_BASE + 7)); }
                 for (int k = 0; k < 20; k++) {
-                    u8 *s = (u8*)&G + 0xE5CC + k*0x33;
+                    u8 *s = ENT_BASE + k*0x33;
                     if ((i8)s[0] < 0) continue;
                     printf("E,%d,%d,%d,%d,%d,%d,%d,%d,%d\n", f, k, (i8)s[0],
                         (i16)*(u16*)(s+3), (i16)*(u16*)(s+1), (i16)*(u16*)(s+5),
@@ -225,8 +226,8 @@ int main(int argc, char **argv) {
         const char *endshot = (argc >= 7) ? argv[6] : NULL; /* final gameplay-frame PPM dump */
         game_init(assets);
         frontend_reset(assets);                               /* set the asset dir (fe_show_cpt/decor) */
-        if (play) { GB(0xDC6F) = 0x00; GW(0xEA3A) = 0x01;     /* NORMAL level-1 play */
-                    GW(0xDC68) = 0x04; GW(0x27C9) = 0x00; GW(0x27CB) = 0x00; }  /* lives/score game-start */
+        if (play) { Gb_demo_flag = 0x00; Gw_credits = 0x01;     /* NORMAL level-1 play */
+                    Gw_lives = 0x04; Gw_score_lo = 0x00; Gw_score_hi = 0x00; }  /* lives/score game-start */
         else      attract_state();                            /* attract (== the demo) */
         demo_input_set_tape(tape, (int)tlen);
         /* per-frame PPM dumps for PIXEL verification: FRAMEPPM_DIR + FRAMEPPM_LIST="500,2040,..." */
@@ -245,11 +246,11 @@ int main(int argc, char **argv) {
         while (f < n) {
             if (run_level_frame()) {
                 printf("%d,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\n", f,
-                    GW(0xEA3C), GW(0xE9CC), GD(0xF6C4), GW(0xDD84), GW(0xDD86),
-                    GB(0xDE50), GB(0xDE51), GB(0xDE52), GW(0xDE53), GB(0xF461), GB(0xF6EC),
-                    GW(0xF682), GW(0xF6AF), GW(0x27C9), GW(0x27CB), GW(0xEF50), GB(0xF688),
-                    GW(0x24F1), GW(0xF468), GW(0xDC7E), GW(0xEF4A), GW(0xDE5D),
-                    GW(0x379F), GW(0xF6D8), GW(0xF46A), GW(0xDC6C), GB(0xDC6E), GW(0x27C7));
+                    Gw_dist_lo, Gw_speed, Gd_objective, Gw_car_x, Gw_horizon,
+                    Gb_panel_msg, Gb_panel_delay, Gb_panel_state, Gw_panel_cursor, Gb_rle_count, Gb_input_mask,
+                    Gw_rle_ptr, Gw_game_mode, Gw_score_lo, Gw_score_hi, Gw_mtn_scroll, Gb_obj_done,
+                    Gw_tick_timer, Gw_decor_density, Gw_decor_count, Gw_ring_head, Gw_ring_tail,
+                    Gw_decor_kind_cur, Gw_decor_latch, Gw_enemy_count, Gw_fuel_window, Gb_stage_clear, Gw_stage);
                 if (ppdir) for (int i = 0; i < ppn; i++) if (ppf[i] == f) {
                     char pth[300]; snprintf(pth, sizeof pth, "%s/port_f%d.ppm", ppdir, f);
                     ff_screenshot_ppm(pth, (const uint8_t(*)[3])GC.pal); }
@@ -257,17 +258,17 @@ int main(int argc, char **argv) {
                     char pth[300]; snprintf(pth, sizeof pth, "%s/port_f%d.ppm", ppdir, f);
                     ff_screenshot_ppm(pth, (const uint8_t(*)[3])GC.pal); }
                 if (fdlo >= 0 && f >= fdlo && f <= fdhi)
-                    for (int k = 0; k < 20; k++) { u8 *s = (u8*)&G + 0xE5CC + k*0x33;
+                    for (int k = 0; k < 20; k++) { u8 *s = ENT_BASE + k*0x33;
                         if ((i8)s[0] < 0) continue;
                         printf("E,%d,%d,%d,%d,%d,%d,%d,%d,%d\n", f, k, (i8)s[0],
                             (i16)*(u16*)(s+3), (i16)*(u16*)(s+1), (i16)*(u16*)(s+5),
                             (i16)*(u16*)(s+0x11), s[0x2f], s[0x2e]); }
                 f++;
-            } else if (play && GB(0xDC6E) != 0) {          /* boss killed -> STAGE branch */
-                u32 sc = ((u32)GW(0x27CB) << 16) | GW(0x27C9);
+            } else if (play && Gb_stage_clear != 0) {          /* boss killed -> STAGE branch */
+                u32 sc = ((u32)Gw_score_hi << 16) | Gw_score_lo;
                 int cont = frontend_stage_advance();       /* fn0DAE_03AA (interlude, ETAPE palette) */
                 fprintf(stderr, "STAGE CLEAR @tape %d -> stage %u (score carries %u, lives %d)%s\n",
-                        f, GW(0x27C7), sc, (i16)GW(0xDC68), cont ? "" : " [GAME COMPLETE]");
+                        f, Gw_stage, sc, (i16)Gw_lives, cont ? "" : " [GAME COMPLETE]");
                 if (ilude) { ff_screenshot_ppm(ilude, (const uint8_t(*)[3])GC.pal); ilude = NULL; }
                 if (!cont) break;
                 run_level_init();                          /* re-enter run_level: gameplay palette + fresh stage */
@@ -312,11 +313,11 @@ int main(int argc, char **argv) {
                 run_level_frame();
                 if (rlf == 0)
                     printf("RACE STARTED @boot %d: bDC6F=%d (0=human play) EA3A=%d lives=%d 27C7=%d\n",
-                           i, GB(0xDC6F), GW(0xEA3A), GW(0xDC68), GW(0x27C7));
+                           i, Gb_demo_flag, Gw_credits, Gw_lives, Gw_stage);
                 if (rlf == 20 || rlf == 60 || rlf == 100)
                     printf("  rf=%-3d input=%s DD84(carX)=%-4d speed=%-3d F6AF=%d\n", rlf,
                            rlf < 40 ? "UP" : rlf < 75 ? "UP+LEFT" : "UP+RIGHT",
-                           (i16)GW(0xDD84), GW(0xE9CC), GW(0xF6AF));
+                           (i16)Gw_car_x, Gw_speed, Gw_game_mode);
                 rlf++;
             }
         }
@@ -376,26 +377,25 @@ int main(int argc, char **argv) {
                 if (rf == 0) rf = 1;                    /* race frame 0 ran inside the
                                                          * frontend handover (spiral reveal) */
                 if (!fet && rf < 2600) GC.input[FF_K_UP] = 1;   /* build a qualifying score */
-                if (rf == 2650) { GW(0xDC68) = 0; GW(0xDC6C) = 1; }  /* force quick death */
+                if (rf == 2650) { Gw_lives = 0; Gw_fuel_window = 1; }  /* force quick death */
                 if (run_level_frame()) {
                     rf++;
                 } else {
                     race++;
                     printf("  @%-6d RACE %d ENDED rf=%d score=%u EA3A=%d\n",
-                           i, race, rf, GW(0x27C9), GW(0xEA3A));
+                           i, race, rf, Gw_score_lo, Gw_credits);
                     rf = 0;
                     if (fet) demo_input_set_tape(fet, (int)fetlen);   /* re-arm per race */
-                    if (GB(0xDC6E) != 0) { frontend_stage_advance(); run_level_init(); g_exhaust_phase = 1; decor_set_accum(0); }
+                    if (Gb_stage_clear != 0) { frontend_stage_advance(); run_level_init(); g_exhaust_phase = 1; decor_set_accum(0); }
                     else frontend_post_race();
                 }
             }
             if (race >= 2 && frontend_phase() == 7) break;   /* back at the menu: done */
         }
-        u8 *g = (u8 *)&G;
         printf("HIGH TABLE after name entry:\n");
         for (int k = 0; k < 6; k++) {
-            u32 sc = ((u32)*(u16 *)(g + 0x282F + k * 4) << 16) | *(u16 *)(g + 0x282D + k * 4);
-            printf("  %d: name='%.5s' score=%u\n", k, (char *)(g + 0x27D9 + k * 0x0E), sc);
+            u32 sc = ((u32)g_high.score[k].hi << 16) | g_high.score[k].lo;
+            printf("  %d: name='%.5s' score=%u\n", k, g_high.name[k], sc);
         }
         char hp[320]; snprintf(hp, sizeof hp, "%s/HIGH", assets);
         FILE *hf = fopen(hp, "rb");
@@ -414,13 +414,13 @@ int main(int argc, char **argv) {
         attract_state();
         int n = 0;
         while (run_level_frame()) { if (++n > 20000) break; }
-        printf("race ended after %d frames (DE50=%d DC6E=%d)\n", n, GB(0xDE50), GB(0xDC6E));
+        printf("race ended after %d frames (DE50=%d DC6E=%d)\n", n, Gb_panel_msg, Gb_stage_clear);
         char p[400];
         snprintf(p, sizeof p, "%s/port_race_end.ppm", argv[2]);
         ff_screenshot_ppm(p, (const uint8_t(*)[3])GC.pal);
-        if ((i16)GW(0xEA3A) != 0) GW(0xEA3A) = (u16)(GW(0xEA3A) - 1);   /* game_main @959 */
+        if ((i16)Gw_credits != 0) Gw_credits = (u16)(Gw_credits - 1);   /* game_main @959 */
         int finale = (argc >= 4 && strcmp(argv[3], "finale") == 0);
-        if (finale) GW(0x27C7) = 0x04;   /* inject stage-5 death (same override in QEMU) */
+        if (finale) Gw_stage = 0x04;   /* inject stage-5 death (same override in QEMU) */
         round_transition_start();
         int f = 0;
         int every = finale ? 10 : 1;     /* finale: PPM every 10th + full state lines */
@@ -429,12 +429,12 @@ int main(int argc, char **argv) {
                 snprintf(p, sizeof p, "%s/port_cs_%03d.ppm", argv[2], f);
                 ff_screenshot_ppm(p, (const uint8_t(*)[3])GC.pal);
             }
-            printf("C,%d,%d,%d,%d,%u,%u,%u,%u,%u,%d,%u\n", f, GB(0xDE50), GB(0xDE52), GW(0xDE53),
-                   GW(0xEF52), GW(0x27C7), GW(0xEA3C), GW(0xE9CC), GW(0xEF50),
-                   (i16)GW(0xF46A), GW(0xF6C8));
+            printf("C,%d,%d,%d,%d,%u,%u,%u,%u,%u,%d,%u\n", f, Gb_panel_msg, Gb_panel_state, Gw_panel_cursor,
+                   Gw_spr_count, Gw_stage, Gw_dist_lo, Gw_speed, Gw_mtn_scroll,
+                   (i16)Gw_enemy_count, Gw_charge_flag);
             if (finale)
                 for (int k = 0; k < 20; k++) {
-                    u8 *s = (u8*)&G + 0xE5CC + k*0x33;
+                    u8 *s = ENT_BASE + k*0x33;
                     if ((i8)s[0] < 0) continue;
                     printf("E,%d,%d,%d,%d,%d,%d,%d,%d,%d\n", f, k, (i8)s[0],
                         (i16)*(u16*)(s+3), (i16)*(u16*)(s+1), (i16)*(u16*)(s+5),
@@ -455,7 +455,7 @@ int main(int argc, char **argv) {
         int n = 0;
         while (run_level_frame()) { if (++n > 20000) break; }
         printf("race ended after %d frames (DE50=%d DC6E=%d 27C7=%d EA3A=%d)\n",
-               n, GB(0xDE50), GB(0xDC6E), GW(0x27C7), GW(0xEA3A));
+               n, Gb_panel_msg, Gb_stage_clear, Gw_stage, Gw_credits);
         return 0;
     }
 
@@ -469,9 +469,9 @@ int main(int argc, char **argv) {
         for (int i = 0; i < n; i++) {
             run_level_frame();
             printf("%d,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\n", i,
-                GW(0xEA3C), GW(0xE9CC), GD(0xF6C4), GW(0xDD84), GW(0xDD86),
-                GB(0xDE50), GB(0xDE52), GW(0xDE53), GB(0xF461), GB(0xF6EC),
-                GW(0xF682), GW(0xF6AF), GW(0x27C9), GW(0x27CB), GW(0xEF50), GB(0xF688));
+                Gw_dist_lo, Gw_speed, Gd_objective, Gw_car_x, Gw_horizon,
+                Gb_panel_msg, Gb_panel_state, Gw_panel_cursor, Gb_rle_count, Gb_input_mask,
+                Gw_rle_ptr, Gw_game_mode, Gw_score_lo, Gw_score_hi, Gw_mtn_scroll, Gb_obj_done);
         }
         return 0;
     }
@@ -486,22 +486,23 @@ int main(int argc, char **argv) {
         for (int i = 0; i < n; i++) {
             run_level_frame();
             printf("%d,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\n", i,
-                GW(0xEA3C), GW(0xE9CC), GD(0xF6C4), GW(0xDD84), GW(0xDD86),
-                GB(0xDE50), GB(0xDE51), GB(0xDE52), GW(0xDE53), GB(0xF461), GB(0xF6EC),
-                GW(0xF682), GW(0xF6AF), GW(0x27C9), GW(0x27CB), GW(0xEF50), GB(0xF688),
-                GW(0x24F1), GW(0xF468), GW(0xDC7E), GW(0xEF4A), GW(0xDE5D),
-                GW(0x379F), GW(0xF6D8), GW(0xF46A), GW(0xDC6C));
+                Gw_dist_lo, Gw_speed, Gd_objective, Gw_car_x, Gw_horizon,
+                Gb_panel_msg, Gb_panel_delay, Gb_panel_state, Gw_panel_cursor, Gb_rle_count, Gb_input_mask,
+                Gw_rle_ptr, Gw_game_mode, Gw_score_lo, Gw_score_hi, Gw_mtn_scroll, Gb_obj_done,
+                Gw_tick_timer, Gw_decor_density, Gw_decor_count, Gw_ring_head, Gw_ring_tail,
+                Gw_decor_kind_cur, Gw_decor_latch, Gw_enemy_count, Gw_fuel_window);
             for (int k = 0; k < 10; k++) {
-                u16 e = (u16)(0xDDEC + k * 0x0A);
-                if (GW(e))
-                    printf("R,%d,%d,%d,%d,%d,%#x\n", i, k, (i16)GW(e), (i16)GW(e+2), GW(e+4), GW(e+6));
+                DecorProto *e = &g_decor_ring[k];
+                if (e->kind)
+                    printf("R,%d,%d,%d,%d,%d,%#x\n", i, k, e->kind, e->side,
+                           (u16)e->phase, e->morph.off);
             }
             for (int k = 0; k < 20; k++) {
-                u8 *s = (u8*)&G + 0xE5CC + k*0x33;
+                u8 *s = ENT_BASE + k*0x33;
                 if (s[0] != 0xFF)
                     printf("E,%d,%d,%d,%d,%d,%d,%d,%d\n", i, k, s[0],
-                        (i16)GW(0xE5CC+k*0x33+1), (i16)GW(0xE5CC+k*0x33+3),
-                        (i16)GW(0xE5CC+k*0x33+5), s[0x2E], s[0x2F]);
+                        (i16)*(u16*)(s+1), (i16)*(u16*)(s+3),
+                        (i16)*(u16*)(s+5), s[0x2E], s[0x2F]);
             }
         }
         return 0;
@@ -513,52 +514,55 @@ int main(int argc, char **argv) {
         attract_state();
         int n = atoi(argv[2]);
         for (int i = 0; i < n; i++) run_level_frame();
-        printf("=== entity pool @0xE5CC after %d frames ===\n", n);
+        printf("=== entity pool g_pool[20] after %d frames ===\n", n);
         for (int k = 0; k < 20; k++) {
-            u8 *s = (u8*)&G + 0xE5CC + k*0x33;
+            u8 *s = ENT_BASE + k*0x33;
             if (s[0] == 0xFF) continue;
             /* replicate the fn0A0D_053E morph walk to show the picked sprite */
-            i16 di = (i16)GW(0xE5CC+k*0x33+3);
-            u16 anim = GW(0xE5CC+k*0x33+0x1D);
-            i16 base1B = (i16)GW(0xE5CC+k*0x33+0x1B);
+            i16 di = (i16)*(u16*)(s+3);
+            u16 anim = *(u16*)(s+0x1D);
+            i16 base1B = (i16)*(u16*)(s+0x1B);
             int picked = -1, pw=0, ph=0;
             if (di >= 0 && di < 0x100 && anim) {
-                u16 ax = (u16)(GB(0xE4CC+di) >> 1);
-                i16 t19 = (i16)((ax * (u16)GW(anim)) >> 6);
-                u16 p = anim;
-                for (int j=0; j<13 && t19 < GI(p); ++j) p += 4;
-                i16 sp = GI(p+2); if (sp < 0) sp = GI(p-2);
+                u16 ax = (u16)(g_persp_scale[di] >> 1);
+                MorphEnt *m = morph_at(anim);
+                i16 t19 = (i16)((ax * (u16)m[0].thresh) >> 6);
+                int j = 0;
+                while (j < 13 && t19 < m[j].thresh) ++j;
+                i16 sp = m[j].sprite; if (sp < 0) sp = m[j-1].sprite;
                 if (base1B) sp = (i16)(sp + base1B);
                 picked = sp; ff_dir_dims(picked, &pw, &ph);
             }
             printf(" slot%2d type=%3d scrX=%4d di=%4d scrY=%4d shape=%d proj=%d anim=%#06x base=%d -> spr=%d %dx%d hp=%d\n",
-                k, s[0], (i16)GW(0xE5CC+k*0x33+1), (i16)GW(0xE5CC+k*0x33+3),
-                (i16)GW(0xE5CC+k*0x33+5), s[0x2E], s[0x2C],
+                k, s[0], (i16)*(u16*)(s+1), (i16)*(u16*)(s+3),
+                (i16)*(u16*)(s+5), s[0x2E], s[0x2C],
                 anim, base1B, picked, pw, ph, s[0x2F]);
         }
-        printf("live count wF46A=%d  tEF52=%d\n", GW(0xF46A), GW(0xEF52));
+        printf("live count wF46A=%d  tEF52=%d\n", Gw_enemy_count, Gw_spr_count);
         printf("HUD: bF462(weapon)=%d bF6D3=%d w38AF(fuel)=%d bF7ED(orbs)=%d wDC68(lives)=%d "
                "wE9C8=%d w38AB(F)=%d w38AD(K)=%d wDC6C=%d wDC78=%d w24FF=%d "
                "glyph[0x38B1+n]=%d/%d/%d term=%d\n",
-               (i8)GB(0xF462), GB(0xF6D3), (i16)GW(0x38AF), (i8)GB(0xF7ED), (i16)GW(0xDC68),
-               (i16)GW(0xE9C8), (i16)GW(0x38AB), (i16)GW(0x38AD), (i16)GW(0xDC6C), (i16)GW(0xDC78),
-               GW(0x24FF), GB(0x38B1+(i8)GB(0xF462)), GB(0x38B2+(i8)GB(0xF462)),
-               GB(0x38B3+(i8)GB(0xF462)), GB(0x38B4+(i8)GB(0xF462)));
-        printf("=== aDEEE[298..350] (idx: off/seg  dims) ===\n");
+               (i8)Gb_weapon_anim, Gb_hud_phase, (i16)Gw_fuel_shown, (i8)Gb_orbs_shown, (i16)Gw_lives,
+               (i16)Gw_missile_fuel, (i16)Gw_fbar_shown, (i16)Gw_kbar_shown, (i16)Gw_fuel_window, (i16)Gw_kero,
+               Gw_blink, ffd_hud_glyph_tables[0+(i8)Gb_weapon_anim],
+               ffd_hud_glyph_tables[1+(i8)Gb_weapon_anim],
+               ffd_hud_glyph_tables[2+(i8)Gb_weapon_anim],
+               ffd_hud_glyph_tables[3+(i8)Gb_weapon_anim]);
+        printf("=== sprite dir g_sprdir[298..350] (idx: off/seg  dims) ===\n");
         for (int idx = 298; idx <= 350; idx++) {
-            u16 off = GW(0xDEEE + idx*4), seg = GW(0xDEF0 + idx*4);
+            u16 off = g_sprdir[idx].off, seg = g_sprdir[idx].seg;
             if (seg == 0) continue;
             int w=0,h=0; ff_dir_dims(idx, &w, &h);
             printf("  aDEEE[%d] off=%d seg=%d  %dx%d\n", idx, off, seg, w, h);
         }
         printf("=== decor ring aDDEC (spawn F468=%d DC7E=%d EF4A=%d DE5D=%d 379F=%d F6D8=%#x EA3C=%#x) ===\n",
-               (i16)GW(0xF468), (i16)GW(0xDC7E), (i16)GW(0xEF4A), (i16)GW(0xDE5D),
-               (i16)GW(0x379F), GW(0xF6D8), GW(0xEA3C));
+               (i16)Gw_decor_density, (i16)Gw_decor_count, (i16)Gw_ring_head, (i16)Gw_ring_tail,
+               (i16)Gw_decor_kind_cur, Gw_decor_latch, Gw_dist_lo);
         for (int k = 0; k < 10; k++) {
-            u16 e = (u16)(0xDDEC + k * 0x0A);
-            if (GW(e) == 0) continue;
+            DecorProto *e = &g_decor_ring[k];
+            if (e->kind == 0) continue;
             printf(" ring%d kind=%d side=%d phase=%d script=%#x\n",
-                   k, (i16)GW(e), (i16)GW(e + 2), (i16)GW(e + 4), GW(e + 6));
+                   k, e->kind, e->side, e->phase, e->morph.off);
         }
         return 0;
     }
@@ -595,11 +599,11 @@ int main(int argc, char **argv) {
         int n = atoi(argv[2]);
         for (int i = 0; i < n; i++) run_level_frame();
         printf("k  leftx rightx  Y   accum   (a2C51 after %d frames; wF1FD=%u DD84=%d tF6CD=%#x wF480=%d curve=%d)\n",
-               n, GW(0xF1FD), (i16)GW(0xDD84), track_pos(), (i16)GW(0xF480), track_curve_now());
+               n, Gw_road_center, (i16)Gw_car_x, track_pos(), (i16)Gw_track_seg, track_curve_now());
         for (int k = 0; k < 16; k++)
             printf("%2d %5d %6d %4d %6d\n", k,
-                (i16)GW(0x2C51+2*k), (i16)GW(0x2C51+2*k+0x20),
-                (i16)GW(0x2C51+2*k+0x40), (i16)GW(0x2C51+2*k+0x60));
+                g_road.left[k], g_road.right[k],
+                g_road.y[k], g_road.center[k]);
         return 0;
     }
 
@@ -622,8 +626,7 @@ int main(int argc, char **argv) {
      * needs the sprite directory for the © glyph (aDEEE[0x38] = BOB 56). */
     if (argc >= 3 && strcmp(argv[1], "--title") == 0) {
         char cp[320];
-        snprintf(cp, sizeof cp, "%s/dgroup.bin", assets);
-        if (ff_load_dgroup(cp) != 0) ff_load_dgroup("assets/dgroup.bin");
+        ff_apply_data_tables();            /* strings/tables from source data */
         snprintf(cp, sizeof cp, "%s/font_ega.bin", assets);
         ff_font_load(cp);
         snprintf(cp, sizeof cp, "%s/cpt/BOB.CPT", assets);
@@ -631,7 +634,7 @@ int main(int argc, char **argv) {
         ff_display_list_init();                 /* fn0A0D_09E4: aDEEE directory */
         frontend_reset(assets);
         frontend_title_screen();                /* fn0DAE_0001 */
-        ff_font_draw((char *)GPTR(0x39BA), 0x0C, 0x70, 0xB0, 3); /* INSERT COINS (menu draw) */
+        ff_font_draw((char *)ffd_txt_insertcoins, 0x0C, 0x70, 0xB0, 3); /* INSERT COINS (menu draw) */
         ff_screenshot_ppm(argv[2], (const uint8_t(*)[3])GC.pal);
         printf("title -> %s\n", argv[2]);
         return 0;

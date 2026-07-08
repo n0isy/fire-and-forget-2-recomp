@@ -8,11 +8,17 @@
  * input/physics chain is keyboard.c + camera_faithful.c + run_level.c — and
  * was removed.) */
 #include "ff_game.h"
-#include "gmem.h"
+#include "gnames.h"
+#include "data/gamedata.h"   /* ffd_car_sprites / ffd_exhaust_* / ffd_crash_particle_sprites */
 #include "../render/ff_font.h"
 #include <string.h>
 
 void draw_player_vehicle(void);   /* faithful run_level vehicle draw (below) */
+
+/* THE CRASH-PARTICLE RING (de-DGROUP'd): was the 8 x 10-byte region @0x35CA.
+ * vx/v0 keep their DATA values (seeded from ffd_particle_init by
+ * ff_apply_data_tables); x/vy/y are re-seeded per crash by fn1069_13c0. */
+Particle g_particles[8];
 
 /* =========================================================================== */
 /* STRONG: render path  (bg -> sorted entities -> player)                      */
@@ -70,30 +76,30 @@ void render_frame(void)
  * (ground bounce). (The b409f sfx call FUN_1c3a_027b(0x13) is omitted.) */
 static void crash_particles_draw(void)
 {
-    int spr = (i16)GW(0x2507 + (g_crash_phase >> 1) * 2);
+    int spr = (i16)ffd_crash_particle_sprites[g_crash_phase >> 1];
     if (g_crash_phase == 0x18) {
         for (int i = 0; i < 8; ++i) {
-            u16 p = (u16)(0x35CA + i * 10);
-            GI(p + 2) = (i16)(GI(0xDD84) + 0xA0);   /* x  = bb94 (+0xA0 window) */
-            GI(p + 4) = GI(p + 8);                  /* vy = v0                  */
-            GI(p + 6) = (i16)(GI(0xDD86) + 10);     /* y  = bb96 + 10           */
+            Particle *p = &g_particles[i];
+            p->x  = (i16)(Gi_car_x + 0xA0);         /* x  = bb94 (+0xA0 window) */
+            p->vy = p->v0;                          /* vy = v0                  */
+            p->y  = (i16)(Gi_horizon + 10);         /* y  = bb96 + 10           */
         }
     }
     int w = 0, h = 0;
     ff_dir_dims(spr, &w, &h);
     for (int i = 0; i < 8; ++i) {
-        u16 p = (u16)(0x35CA + i * 10);
+        Particle *p = &g_particles[i];
         if (w > 0 && h > 0) {
-            int top = GI(p + 6) - h;
+            int top = p->y - h;
             if (top < 0) top += 1;                  /* 1187:1CFA top-clip quirk */
-            ff_dir_blit(spr, GI(p + 2) - (w >> 1), top + 48);
+            ff_dir_blit(spr, p->x - (w >> 1), top + 48);
         }
-        GI(p + 2) = (i16)(GI(p + 2) + GI(p + 0));   /* x += vx  */
-        GI(p + 6) = (i16)(GI(p + 6) - GI(p + 4));   /* y -= vy  */
-        GI(p + 4) = (i16)(GI(p + 4) - 1);           /* vy -= 1  */
-        if (GI(p + 6) > 0x96) {                     /* ground bounce */
-            GI(p + 4) = (i16)(-GI(p + 4));
-            GI(p + 6) = (i16)(GI(p + 6) - GI(p + 4));
+        p->x  = (i16)(p->x + p->vx);                /* x += vx  */
+        p->y  = (i16)(p->y - p->vy);                /* y -= vy  */
+        p->vy = (i16)(p->vy - 1);                   /* vy -= 1  */
+        if (p->y > 0x96) {                          /* ground bounce */
+            p->vy = (i16)(-p->vy);
+            p->y  = (i16)(p->y - p->vy);
         }
     }
 }
@@ -102,14 +108,14 @@ static void crash_particles_draw(void)
 void draw_player_vehicle(void)
 {
     if (!GC.bob) return;
-    int bb94 = GI(0xDD84);
-    int bb96 = GI(0xDD86);
+    int bb94 = Gi_car_x;
+    int bb96 = Gi_horizon;
     int sx = bb94 + 0xA0;
     /* banking column wFFFFFFD0 = (DD84+0xA0)>>5 - road-lean - steering-lean, computed
      * faithfully each frame by car_column_step() (fn1069_0006 @619-653). */
     int local_32 = g_car_col;
     int local_30 = g_car_row;                           /* switch#2: 4 ground, 0..3 flight */
-    int id = GI(0x3687 + local_30 * 0x20 + local_32 * 2);
+    int id = ffd_car_sprites[local_30][local_32];
     int w = 0, h = 0;
     ff_bob_dims(GC.bob, id, &w, &h);
     if (w <= 0 || h <= 0) return;
@@ -139,7 +145,7 @@ void draw_player_vehicle(void)
      * draws — the `if (bc7d==0) { if (d4bf!=4) {...} } else {particles}` gates. */
     if (g_crash_phase != 0) {
         crash_particles_draw();                         /* FUN_1069_13c0 */
-    } else if (GW(0xF6AF) != 0x04) {
+    } else if (Gw_game_mode != 0x04) {
         /* fn1069_0006 @1756-1776: the (wF6A9==0 || w24FF==0) gate chooses the car draw.
          *   PASS (normal): FUN_120d_07cf(bb94, iVar9, id) — the multicolour car sprite,
          *     followed by the twin exhaust / wheel-dust puffs (a373B offsets).
@@ -148,19 +154,19 @@ void draw_player_vehicle(void)
          *     EGA Map Mask = d013-1 so every opaque pixel becomes ONE colour index = a
          *     solid red silhouette (d013=0xd hit -> 12, =10 respawn -> 9). NO exhaust in
          *     the flash branch (the else has only the 08d7 call). */
-        if (g_flash_f6a9 == 0 || GW(0x24FF) == 0) {   /* d4b9 read at the @1756 draw
+        if (g_flash_f6a9 == 0 || Gw_blink == 0) {   /* d4b9 read at the @1756 draw
                                                         * point (pre 20-frame dec) */
             ff_bob_blit(GC.bob, id, scrX, scrY);        /* FUN_120d_07cf: normal car */
 
             /* twin exhaust / wheel-dust puffs — fn1069_0006 @758-772. a373B[frame*4]=
              * {dxL,dyL,dxR,dyR}: id<7 -> two BOB 0x41 (Y-wobbled by a378F[phase]);
              * id>=7 && w24FF -> BOB 0x43/0x42 wheel-DUST. Centre-x/bottom-y +PF_Y. */
-            const i8 *t = (const i8 *)GPTR(0x373B + id * 4);
+            const i8 *t = (const i8 *)ffd_exhaust_offsets[id];
             if (id < 7) {
-                int ey = iVar9 + (i8)GB(0x378F + g_exhaust_phase);
+                int ey = iVar9 + (i8)ffd_exhaust_wobble[g_exhaust_phase];
                 ff_bob_blit(GC.bob, 0x41, sx + t[0] - 8, ey + t[1] - 1 + 48);   /* left  */
                 ff_bob_blit(GC.bob, 0x41, sx + t[2] - 8, ey + t[3] - 1 + 48);   /* right */
-            } else if (GW(0x24FF) != 0) {
+            } else if (Gw_blink != 0) {
                 int wl = 0, hl = 0, wr = 0, hr = 0;
                 ff_bob_dims(GC.bob, 0x43, &wl, &hl);
                 ff_bob_dims(GC.bob, 0x42, &wr, &hr);
@@ -168,7 +174,7 @@ void draw_player_vehicle(void)
                 ff_bob_blit(GC.bob, 0x42, sx + t[2] - (wr >> 1), iVar9 + t[3] - hr + 48); /* right dust */
             }
         } else {
-            int col = (i16)GW(0xF203) - 1;              /* d013 - 1 (Map Mask colour) */
+            int col = (i16)Gw_flash_colour - 1;              /* d013 - 1 (Map Mask colour) */
             if (col > 0) ff_bob_blit_recolor(GC.bob, id, scrX, scrY, col);   /* FUN_120d_08d7 flash */
         }
 
@@ -186,15 +192,15 @@ void draw_player_vehicle(void)
      * passing explosion (ent_explosion_*), the kamikaze strike or an egg hit at
      * (wDE67, tDE6B); enqueued once via FUN_120d_07cf and CLEARED. (The port set
      * the field in behaviors.c but never drew/cleared it — a real pixel gap.) */
-    if (GW(0xF085) != 0) {
+    if (Gw_cflash_spr != 0) {
         int fw = 0, fh = 0;
-        ff_dir_dims((int)GW(0xF085), &fw, &fh);
+        ff_dir_dims((int)Gw_cflash_spr, &fw, &fh);
         if (fw > 0 && fh > 0) {
-            int ftop = (i16)GW(0xDE6B) - fh;
+            int ftop = (i16)Gw_cflash_y - fh;
             if (ftop < 0) ftop += 1;                    /* 1187:1CFA top-clip quirk */
-            ff_dir_blit((int)GW(0xF085), (i16)GW(0xDE67) - (fw >> 1), ftop + 48);
+            ff_dir_blit((int)Gw_cflash_spr, (i16)Gw_cflash_x - (fw >> 1), ftop + 48);
         }
-        GW(0xF085) = 0;
+        Gw_cflash_spr = 0;
     }
     ff_blit_clip_top = 0;                               /* end of the playfield draws */
     ff_blit_quirk6   = 0;

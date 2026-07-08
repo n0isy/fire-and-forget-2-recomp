@@ -21,18 +21,24 @@ Every reconstructed subsystem was verified against the real game running under Q
 
 **Not ported yet:** sound (AdLib / PC speaker) — the only missing subsystem.
 
-## You need the original game files
+## You need the original game's graphics
 
-No game data ships with this repository. To build a playable game you must own
-Fire & Forget II and point the extraction script at your game directory
-(it needs `FF2EGA.EXE`, the `*.CPT` files and `HIGH`):
+The reconstructed engine **and all of its game‑logic data** (the level scripts, enemy
+tables, palettes, the sprite‑composer programs, LUTs, texts …) ship as readable source,
+so you no longer need the original executable's DGROUP blob to build or run — the build
+is self‑contained (see *Reconstructed data & tooling* below).
+
+What is **not** reconstructed is the original **graphics**. To play you must own
+Fire & Forget II and extract its screens, sprites and HUD font from your own copy:
 
 ```sh
-scripts/extract_assets.sh /path/to/your/FF2
+scripts/extract_assets.sh /path/to/your/FF2      # needs FF2EGA.EXE, *.CPT, HIGH
 ```
 
-This produces the `assets/` directory the engine loads (two data blobs cut from your
-executable + your CPT screens/sprites + your highscore file).
+This fills the (never‑committed) `assets/` directory with your copy's `cpt/*.CPT`
+graphics, the `font_ega.bin` HUD font and your `HIGH` score file. It also cuts
+`dgroup.bin`, which the engine no longer reads — it only lets `tools/waveasm.py --verify`
+cross‑check the shipped level scripts against your own original.
 
 ## Build & run
 
@@ -68,22 +74,53 @@ to force them). A fullscreen button sits in the top-right corner.
 
 ```
 src/            the reconstructed engine (C11), one module per original subsystem
+src/game/data/  the DGROUP game‑logic data, reconstructed as typed C source
 src/CMakeLists.txt
+wave/           level scripts in the recovered wave DSL (source of wave_data.c)
+tools/          reconstruction tooling (wave (dis)assembler, extractors, Ghidra scripts)
 web/            browser shell (HTML/CSS/JS + vendored nipplejs for the touch joystick)
-scripts/        asset extraction from your own game copy
+scripts/        graphics extraction from your own game copy
 build_wasm.sh   WebAssembly build
-assets/         created by scripts/extract_assets.sh (never committed)
+assets/         your copy's graphics, created by scripts/extract_assets.sh (never committed)
 ```
 
 Source files carry detailed provenance comments: each routine references the original
 function it reconstructs (segment:offset addresses) and the evidence used.
 
+## Reconstructed data & tooling
+
+The original kept its level scripts and lookup tables in the executable's DGROUP data
+segment. Instead of loading that binary blob at runtime, this project reconstructs it as
+readable, **typed C source** under `src/game/data/` — enemy prototypes, the morph and
+sprite‑composer programs, palettes, panel texts, the road curve, the sine/perspective
+LUTs, the RNG seed, the demo input tape, and so on. That is what makes the build
+self‑contained.
+
+The most interesting piece is the **level/wave scripting**. The original game shipped an
+in‑house script VM — its keyword table (`CLEAR`, `GETCHAR`, `PUT`, `WAVE`, `GOSUB`, …)
+still sits in the data segment. We recovered that little language:
+
+- `tools/wavedis.py` **losslessly disassembles** the original DGROUP bytecode into the
+  human‑readable DSL at [`wave/levels.wave`](wave/levels.wave) — mnemonics, enemy‑name
+  symbols, labels, even the cut/dead scripts preserved verbatim as `DEFB`;
+- `tools/waveasm.py` **assembles** `wave/levels.wave` back to bytes and emits the
+  generated `src/game/data/wave_data.c` that the engine executes. The round trip is
+  **byte‑verified** against the original — all 3090 bytecode bytes plus the level
+  directory reassemble identically.
+
+So `wave/levels.wave` is the editable source of truth for the level design, and the
+committed `wave_data.c` is its build product (regenerate with
+`tools/waveasm.py wave/levels.wave --c src/game/data/wave_data.c`). The other tools in
+`tools/` are `pp20_unpack.py` / `bob_extract.py`, standalone decoders for the CPT
+graphics. See [`tools/README.md`](tools/README.md).
+
 ## Legal
 
 This is an unofficial fan preservation / research project, not affiliated with or endorsed
 by the rights holders. *Fire & Forget II* and all original game content are the property of
-their respective owners. The repository contains no original game assets, code or data;
-you must own the original game to play. The reconstructed source is provided for
-educational and preservation purposes.
+their respective owners. This repository ships **no original binaries or graphics** — no
+executable, no CPT screens/sprites, no fonts; you must own the original game and extract
+those from your own copy to play. The engine and its data tables are an original
+transliteration of the disassembled game, provided for educational and preservation purposes.
 
 [nipplejs](https://github.com/yoannmoinet/nipplejs) is MIT-licensed.

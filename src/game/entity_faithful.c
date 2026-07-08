@@ -26,7 +26,7 @@
  * (behaviors.c), exactly as in the ROM - it is NOT centralized here.
  */
 #include "ff_game.h"
-#include "gmem.h"
+#include "gnames.h"
 #include <string.h>
 
 /* ====================================================================== */
@@ -54,16 +54,14 @@ int spawn_enemy_rec(const unsigned char *rec)
         Entity *e = (Entity *)local_6;
         int     type = (int)(i8)rec[0];          /* (char)*param_1 */
 
-        /* memcpy(slot, &template[type*0x33 + 0x1490], 0x33). NOTE: slot[0]
-         * keeps the prototype's type byte - NOT rec[0] - so e.g. type 32
-         * (MOUCHARD) re-types itself to 56 on spawn. */
-        memcpy(local_6,
-               GPTR(DG_ENEMY_PROTOS + type * ENEMY_PROTO_STRIDE),
-               ENTITY_SLOT_SIZE);
+        /* memcpy(slot, &g_protos[type], 0x33). NOTE: slot[0] keeps the
+         * prototype's type byte - NOT rec[0] - so e.g. type 32 (MOUCHARD)
+         * re-types itself to 56 on spawn. */
+        memcpy(local_6, &g_protos[type], ENTITY_SLOT_SIZE);
 
         /* z_pos(32) = camera(32) + (u8)rec[1]   (low @0x15, high @0x17). */
         {
-            u32 cam = ((u32)GW(0xEA3E) << 16) | (u32)GW(0xEA3C);
+            u32 cam = ((u32)Gw_dist_hi << 16) | (u32)Gw_dist_lo;
             e->z_pos = cam + (u32)(u8)rec[1];
         }
 
@@ -81,12 +79,12 @@ int spawn_enemy_rec(const unsigned char *rec)
             e->vz = (i16)(e->vz + iVar6);
 
             e->substate = 0x01;                  /* slot[0x2D] = 1 */
-            GI(0xF46A) += 1;                     /* ++wF46A (live count) */
+            Gi_enemy_count += 1;                     /* ++wF46A (live count) */
 
             /* if rec[1] == 0 (z_pos lands exactly on the camera): nudge once
              * more and back the depth off by one velocity step. */
-            if ((u16)(e->z_pos >> 16) == GW(0xEA3E) &&
-                (u16)e->z_pos        == GW(0xEA3C)) {
+            if ((u16)(e->z_pos >> 16) == Gw_dist_hi &&
+                (u16)e->z_pos        == Gw_dist_lo) {
                 e->vz = (i16)(e->vz + iVar6);
                 e->z_pos -= (u32)(i32)(i16)e->vz;   /* 32-bit subtract */
             }
@@ -110,15 +108,16 @@ void entities_update_all(void)
      * ticks it with this exact gate); not re-entered here to avoid
      * double-advancing it. The exact
      * gate condition is reproduced for fidelity. */
-    if (GW(0xDC6C) != 0 && GB(0xDC6E) == 0) {
+    if (Gw_fuel_window != 0 && Gb_stage_clear == 0) {
         /* fn0BA8_13FD(ds, 0);  -- wave VM, see game/vm.c */
     }
 
     /* wArg04 / param_1 = wDD84 (the horizontal projection / scroll argument);
      * camera depth low word = _DAT_2000_c84c (scroll_accum @0xEA3C).
-     * a2CB1: i16 perspective scale over 16 depth levels @ DGROUP 0x2CB1. */
-    const int  wArg04 = (int)GI(0xDD84);
-    const i16 *a2CB1  = (const i16 *)GPTR(DG_PERSP_TBL);
+     * a2CB1 (was DGROUP 0x2CB1) IS column 3 of the road coord table — the
+     * centre-line accumulator fn0869_15D6 writes each frame: g_road.center. */
+    const int  wArg04 = (int)Gi_car_x;
+    const i16 *a2CB1  = g_road.center;
 
     i8 *local_6 = (i8 *)entity_pool();            /* &DAT_2000_c3dc */
 
@@ -142,7 +141,7 @@ void entities_update_all(void)
         e->z_pos += (u32)(i32)(i16)e->vz;
 
         /* --- on-screen distance: di = (i16)lowword(z_pos) - camera_low. --- */
-        int iVar8 = (int)(i16)((u16)e->z_pos - GW(0xEA3C));
+        int iVar8 = (int)(i16)((u16)e->z_pos - Gw_dist_lo);
         e->di = (i16)iVar8;
 
         /* --- horizontal projection -> screen_x (w0001). --- */
@@ -157,7 +156,7 @@ void entities_update_all(void)
                 iVar7   = 0;
                 local_c = 0;
             } else {
-                local_c = (int)(GW(0xEA3C) & 0x0F) + iVar8;  /* (camera&0xf)+di */
+                local_c = (int)(Gw_dist_lo & 0x0F) + iVar8;  /* (camera&0xf)+di */
                 iVar7   = local_c >> 4;
                 if (iVar7 > 0x0F)
                     iVar7 = 0x0F;
@@ -187,7 +186,7 @@ void entities_update_all(void)
          * this slot's AI didn't touch it (e.g. a just-spawned burst). Our render
          * runs after ALL AIs, so it would otherwise see only the LAST value; the
          * per-slot snapshot lets render_entity reproduce the interleaved value. */
-        g_slot_thresh[local_e] = GW(0x135C);
+        g_slot_thresh[local_e] = Gw_explo_size;
 
         /* original: if the slot is still active (b0000 >= 0) it enqueues the
          * shadow + sprite via fn0869_1726 / enqueue_enemy_sprite. Rendering is

@@ -30,8 +30,15 @@
  * (EA3E:EA3C) — the low word of (accum32 >> 4) is the spawn/draw scroll phase.
  */
 #include "ff_game.h"
-#include "gmem.h"
+#include "gnames.h"
+#include "data/gamedata.h"   /* ffd_decor_protos (the 16 spawn prototypes) */
 #include <string.h>
+
+/* THE DÉCOR RING (de-DGROUP'd): was the aDDEC region @0xDDEC, 10 entries of
+ * 0x0A bytes. Entry layout == DecorProto (kind/side/phase/morph far-ptr);
+ * kind == 0 marks a free/recycled entry. The morph .off is still an offset
+ * into the G morph-script content. */
+DecorProto g_decor_ring[10];
 
 /* run_level stack local wFFFFFFF2 — the spawn accumulator (+= tE9CC/frame).
  * The original NEVER initializes it (no writer besides the += in the loop): it
@@ -58,24 +65,24 @@ void decor_set_accum(int v)
 /* fn0869_1946 — spawn one décor entry into the aDDEC ring. */
 static void decor_spawn(void)
 {
-    if (!((i16)GW(0xDC7E) < (i16)GW(0xF468) && GW(0xDC6C) != 0x00))
+    if (!((i16)Gw_decor_count < (i16)Gw_decor_density && Gw_fuel_window != 0x00))
         return;                                        /* density gate + race on */
 
-    i16 si_23 = (i16)(GW(0xEF4A) + 1);                 /* next write cursor */
-    if ((i16)GW(0xEF4A) > 0x08) si_23 = 0x00;
-    if (si_23 == (i16)GW(0xDE5D)) return;              /* ring full */
+    i16 si_23 = (i16)(Gw_ring_head + 1);                 /* next write cursor */
+    if ((i16)Gw_ring_head > 0x08) si_23 = 0x00;
+    if (si_23 == (i16)Gw_ring_tail) return;              /* ring full */
 
-    u16 ax_40 = (u16)((((u32)GW(0xEA3E) << 16) | GW(0xEA3C)) >> 4);
-    if (ax_40 == GW(0xF6D8)) return;                   /* one spawn / 16-unit step */
+    u16 ax_40 = (u16)((((u32)Gw_dist_hi << 16) | Gw_dist_lo) >> 4);
+    if (ax_40 == Gw_decor_latch) return;                   /* one spawn / 16-unit step */
 
-    GW(0xDC7E) = (u16)(GW(0xDC7E) + 1);
-    GW(0xF6D8) = ax_40;
-    i16 slot = (i16)GW(0xEF4A);                        /* ax_54 = old cursor */
-    GW(0xEF4A) = (u16)si_23;
-    /* fn0800_03AD(0x0A, w379F*0x0A + 0x2727, slot*0x0A + 0xDDEC) */
-    memcpy(GPTR(0xDDEC + slot * 0x0A), GPTR(0x2727 + (i16)GW(0x379F) * 0x0A), 0x0A);
-    GW(0x379F) = (u16)((GW(0x379F) + 1) & 0x0F);       /* cycle the 16 kinds */
-    GW(0xDDEC + slot * 0x0A + 0x04) = (u16)(ax_40 & 0x0F);   /* w0004 = phase */
+    Gw_decor_count = (u16)(Gw_decor_count + 1);
+    Gw_decor_latch = ax_40;
+    i16 slot = (i16)Gw_ring_head;                        /* ax_54 = old cursor */
+    Gw_ring_head = (u16)si_23;
+    /* fn0800_03AD: copy the 10-byte prototype (was blob @0x2727) into the ring */
+    g_decor_ring[slot] = ffd_decor_protos[(i16)Gw_decor_kind_cur];
+    Gw_decor_kind_cur = (u16)((Gw_decor_kind_cur + 1) & 0x0F);       /* cycle the 16 kinds */
+    g_decor_ring[slot].phase = (i16)(ax_40 & 0x0F);      /* w0004 = spawn phase */
 }
 
 /* wave-VM GETCHAR path (fn0BA8_13FD case 1, marker still 0): the original
@@ -88,7 +95,7 @@ void decor_ring_vm_spawn(void)
 /* run_level @705-709: the per-frame spawn accumulator (stack local wFFFFFFF2). */
 void decor_spawn_step(void)
 {
-    s_spawn_accum = (i16)(s_spawn_accum + (i16)GW(0xE9CC));
+    s_spawn_accum = (i16)(s_spawn_accum + (i16)Gw_speed);
     if (s_spawn_accum > 0x40) {
         s_spawn_accum -= 0x40;
         decor_spawn();                                 /* fn0869_1946 */
@@ -101,48 +108,49 @@ void decor_spawn_step(void)
  * before the background fill / entity update; the sort key interleaves them). */
 void decor_ring_enqueue(void)
 {
-    if ((i16)GW(0xDE5D) == (i16)GW(0xEF4A)) return;    /* ring empty */
+    if ((i16)Gw_ring_tail == (i16)Gw_ring_head) return;    /* ring empty */
 
-    i16 dx_23 = (i16)(0x0F - (GW(0xEA3C) & 0x0F));
-    u16 ax_30 = (u16)((((u32)GW(0xEA3E) << 16) | GW(0xEA3C)) >> 4);
-    i16 wLoc08 = ((i16)GW(0xE9CC) > 0x0E) ? 0x02 : 0x01;   /* recycle bound */
+    i16 dx_23 = (i16)(0x0F - (Gw_dist_lo & 0x0F));
+    u16 ax_30 = (u16)((((u32)Gw_dist_hi << 16) | Gw_dist_lo) >> 4);
+    i16 wLoc08 = ((i16)Gw_speed > 0x0E) ? 0x02 : 0x01;   /* recycle bound */
 
-    i16 di = (i16)GW(0xDE5D);
+    i16 di = (i16)Gw_ring_tail;
     do {
-        u16 eoff = (u16)(0xDDEC + di * 0x0A);
-        if (GW(eoff) == 0x00) {                        /* zero kind ends the walk */
-            di = (i16)GW(0xEF4A);
+        DecorProto *e = &g_decor_ring[di];
+        if (e->kind == 0x00) {                         /* zero kind ends the walk */
+            di = (i16)Gw_ring_head;
         } else {
-            i16 si_73 = (i16)(0x0F - ((ax_30 - GW(eoff + 0x04)) & 0x0F));
-            u16 ax_87 = (u16)GB(0xE4CC + ((si_73 << 4) + dx_23));  /* scale */
-            u16 p     = GW(eoff + 0x06);               /* morph script (DGROUP off) */
-            i16 wLoc14 = ((i16)GW(eoff) > 0x0D) ? (i16)ax_87
-                                                : (i16)(ax_87 >> 1);
-            while (GI(p) > wLoc14) p += 4;             /* morph walk */
-            i16 spr = GI(p + 2);                       /* t0002 sprite index */
-            if (spr < 0) spr = GI(p - 2);              /* tFFFE = prev sprite */
+            i16 si_73 = (i16)(0x0F - ((ax_30 - (u16)e->phase) & 0x0F));
+            u16 ax_87 = (u16)g_persp_scale[(si_73 << 4) + dx_23];  /* scale (E4CC) */
+            MorphEnt *m = morph_at(e->morph.off);      /* morph KEY -> g_morph */
+            i16 wLoc14 = (e->kind > 0x0D) ? (i16)ax_87
+                                          : (i16)(ax_87 >> 1);
+            int mk = 0;
+            while (m[mk].thresh > wLoc14) ++mk;        /* morph walk */
+            i16 spr = m[mk].sprite;                    /* t0002 sprite index */
+            if (spr < 0) spr = m[mk - 1].sprite;       /* tFFFE = prev sprite */
 
-            i16 w0002 = GI(eoff + 0x02);
+            i16 w0002 = e->side;
             if (w0002 > 0x00) {                        /* left of the road */
                 dl_enqueue_sorted(
-                    (i16)(GI(0x2C51 + 2 * si_73) - (i16)(ax_87 << GB(eoff + 0x02))),
-                    GI(0x2C51 + 2 * (si_73 + 0x20)),
+                    (i16)(g_road.left[si_73] - (i16)(ax_87 << (u8)e->side)),
+                    g_road.y[si_73],
                     (int)spr, (i16)(si_73 << 4));
             } else {                                   /* right of the road */
                 dl_enqueue_sorted(
-                    (i16)(GI(0x2C51 + 2 * (si_73 + 0x10)) + (i16)(ax_87 << -w0002)),
-                    GI(0x2C51 + 2 * (si_73 + 0x20)),
+                    (i16)(g_road.right[si_73] + (i16)(ax_87 << -w0002)),
+                    g_road.y[si_73],
                     (int)spr, (i16)(si_73 << 4));
             }
 
             if (si_73 < wLoc08) {                      /* reached the near edge */
-                GW(eoff) = 0x00;                       /* recycle the entry */
-                GW(0xDC7E) = (u16)(GW(0xDC7E) - 1);
-                if ((i16)GW(0xDE5D) < 0x09) GW(0xDE5D) = (u16)(GW(0xDE5D) + 1);
-                else                        GW(0xDE5D) = 0x00;
+                e->kind = 0x00;                        /* recycle the entry */
+                Gw_decor_count = (u16)(Gw_decor_count - 1);
+                if ((i16)Gw_ring_tail < 0x09) Gw_ring_tail = (u16)(Gw_ring_tail + 1);
+                else                        Gw_ring_tail = 0x00;
             }
             if (di == 0x09) di = 0x00;
             else            di = (i16)(di + 1);
         }
-    } while (di != (i16)GW(0xEF4A));
+    } while (di != (i16)Gw_ring_head);
 }

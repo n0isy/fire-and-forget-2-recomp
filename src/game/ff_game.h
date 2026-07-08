@@ -6,6 +6,26 @@
 #include "../ff2.h"
 #include "../asset/ff_assets.h"
 #include "entity_dispatch.h"
+#include "data/wave_data.h"
+
+/* ---- WAVE BYTECODE FETCH (de-DGROUP'd) ------------------------------------
+ * The two script VMs EXECUTE straight from the const wave_bytecode[] array
+ * (assembled from wave/levels.wave) — the bytecode is no longer copied into
+ * G. PCs / GOSUB returns / record operands KEEP the original DGROUP-offset
+ * convention (base 0xA0), so all faithful address arithmetic is unchanged;
+ * only the fetch is redirected. */
+static inline u8 wv_b(u16 off)              /* byte at bytecode offset `off` */
+{
+    return wave_bytecode[off - WAVE_BYTECODE_BASE];
+}
+static inline u16 wv_w(u16 off)             /* little-endian word */
+{
+    return (u16)(wv_b(off) | ((u16)wv_b((u16)(off + 1)) << 8));
+}
+static inline const unsigned char *wv_ptr(u16 off)   /* record pointer */
+{
+    return wave_bytecode + (off - WAVE_BYTECODE_BASE);
+}
 
 /* ---- shared runtime context (the port's live state not yet pinned into G) ---- */
 typedef struct {
@@ -24,12 +44,14 @@ typedef struct {
 } GameCtx;
 extern GameCtx GC;
 
-/* DGROUP loader (game/dgroup.c) */
-int  ff_load_dgroup(const char *path);
+/* (the dgroup.bin blob loader is GONE: G starts zeroed — the original BSS —
+ * and ff_apply_data_tables() populates it from the typed data sources.) */
 
 /* lifecycle (game_main.c) */
-int  game_init(const char *asset_dir);   /* load dgroup + bob + first level */
+int  game_init(const char *asset_dir);   /* data tables + bob + first level */
 void game_start_level(int lvl);
+/* populate G from the SOURCE data (data/wave_data + the game/data tables). */
+void ff_apply_data_tables(void);
 
 /* subsystems (each ported in its game/*.c) */
 void vm_step(void);                /* game/vm.c — fn0BA8_13FD(ds,0): one wave-VM dispatch */
@@ -48,7 +70,8 @@ void render_world(void);    /* game/render_world.c — faithful sky+road+scenery
 
 /* road track curve data (game/render_world.c): far-data curve profile from the
  * EXE (segment 0de1), walked by tF6CD (fn0869_154D) — NOT in the DGROUP blob. */
-void track_load(const char *path);   /* load assets/track.bin (fn0869_158D base) */
+void track_load(const char *path);   /* (historical no-op: curve is ffd data)    */
+void track_seed(void);               /* boot: assemble g_track from ffd_track_*  */
 void track_reset(void);              /* per-level: tF6CD = slot 0                */
 void track_step(void);               /* per-frame gate: advance on (c84c&0x30)   */
 void track_advance(void);            /* fn0869_154D: one curve-pointer step      */
@@ -137,7 +160,49 @@ void ff_load_high(const char *asset_dir);
 void ff_save_high(const char *asset_dir);
 
 /* helpers shared across subsystems (game/game_main.c) */
-Entity *entity_pool(void);         /* &G.<entity pool> as Entity[ENTITY_POOL_SLOTS] */
+/* THE ENTITY POOL — de-DGROUP'd: a real typed array outside G (was the 20x0x33
+ * byte region at DGROUP 0xE5CC). All faithful in-slot offset arithmetic keeps
+ * working on the packed Entity layout; only the BASE moved. ENT_BASE is the
+ * byte view for transliterated code that walks slots by 0x33 strides. */
+extern Entity g_pool[ENTITY_POOL_SLOTS];
+#define ENT_BASE ((u8 *)g_pool)
+Entity *entity_pool(void);         /* g_pool as Entity[ENTITY_POOL_SLOTS] */
+
+/* RUNTIME LUT BLOCKS (de-DGROUP'd): tables BUILT by code (boot / level init /
+ * per frame), moved out of the G byte image into standalone typed arrays.
+ * Comments give the original DGROUP home + the builder routine. */
+extern u16 g_speed_tbl[0x100];    /* aF482 @0xF482: throttle -> speed (fn0869_1480; run_level.c) */
+extern u16 g_ramp_tbl[0x3F];      /* wDE6E @0xDE6E: ramp LUT, [i]=i+1 (fn0869_1480)              */
+extern u16 g_shade_tbl[300];      /* aF209 @0xF209: shade table = ramp[speed[i]] (written-only)  */
+extern u8  g_persp_scale[0x100];  /* E4CC @0xE4CC: perspective scale LUT (fn0869_158D, per frame) */
+extern u8  g_persp_halfw[0x100];  /* DC84 @0xDC84: road half-width LUT (fn0869_158D)             */
+extern u8  g_keystate[0x80];      /* INT9 keystate[scancode] @0x3FE3 (fn114C_0012; keyboard.c)   */
+
+/* RUNTIME ARRAY BLOCKS (de-DGROUP'd, step 4): the live arrays that used to sit
+ * at fixed offsets in G, now typed blocks. Original homes + owners noted. */
+/* the roadside-décor ring (was aDDEC @0xDDEC, 10 entries x 0x0A; decor_ring.c).
+ * Entry layout == DecorProto: kind (0 = free), side, spawn phase, morph far-ptr
+ * (.off = the morph script's offset in G — the scripts are still content in G). */
+extern DecorProto g_decor_ring[10];
+/* the crash-particle ring (was @0x35CA, 8 x 10 bytes; player_render.c). The
+ * vx/v0 columns hold their DATA values (ffd_particle_init) — never rewritten;
+ * x/vy/y are re-seeded per crash by fn1069_13c0. */
+extern Particle g_particles[8];
+/* the road coord table (was a2C51 @0x2C51: 16 depth levels x 4 columns, column
+ * stride 0x20; render_world.c fn0869_15D6 fills it per frame). center[] is the
+ * ORIGINAL a2CB1 @0x2CB1 (= column 3), the entity projector's perspective
+ * interpolation source; entries 16..17 take the fn0869_15D6 trailing spill. */
+typedef struct { i16 left[16]; i16 right[16]; i16 y[16]; i16 center[18]; } RoadCoords;
+extern RoadCoords g_road;
+/* the sprite DIRECTORY (was aDEEE @0xDEEE) + real-width table (was aF087
+ * @0xF087); display_init.c owns them. g_sprdir[idx] = {.off = frame/rt-slot,
+ * .seg = bank id + 1 (1 BOB, 2 NUC, 3 generated décor, 4 runtime-composed)}.
+ * 384 covers the original extent (main 0..235, décor 236..299, runtime
+ * 300..379 via the tDE69+0/40 double-buffer halves). */
+#define SPRDIR_MAX 384
+extern FarPtr g_sprdir[SPRDIR_MAX];
+extern u8     g_sprw[SPRDIR_MAX];
+/* (the mutable enemy-prototype pool g_protos[81] is declared in gstate.h) */
 
 /* faithful spawner (game/entity_faithful.c): consume one 5-byte WAVE record
  * [type, depth, y, x, vz], spawn into a free slot, return bytes consumed (5). */

@@ -21,141 +21,141 @@
  *    (fn0869_154D) uses it, so track curvature is script-synchronized.
  */
 #include "ff_game.h"
-#include "gmem.h"
+#include "gnames.h"
 
 /* one wave-VM dispatch; arm != 0 = the fn0BA8_13FD(ds, 1) init call */
 static void wave_step(int arm)
 {
     if (arm) {
         /* PC = script dir a0094[t27C7] + 0xA0; reset the sync state */
-        GW(0xF6BA) = (u16)(GW(0x0094 + GW(0x27C7) * 2) + 0xA0);
-        GW(0xF7C0) = 0x00;                     /* side flag                */
-        GB(0x38A6) = 0x00;                     /* PUT/WAVE phase           */
-        GW(0xF7C2) = 0x01;                     /* re-arm flag              */
-        GW(0x38A4) = 0x01;
+        Gw_wave_pc = (u16)(wave_script_dir[Gw_stage] + 0xA0);
+        Gw_wave_side = 0x00;                     /* side flag                */
+        Gb_wave_phase = 0x00;                     /* PUT/WAVE phase           */
+        Gw_wave_rearm = 0x01;                     /* re-arm flag              */
+        Gw_w38A4 = 0x01;
     }
 
-    path_vm_tick(arm, (int)GW(0xF7C0));        /* fn0BA8_175D every call   */
+    path_vm_tick(arm, (int)Gw_wave_side);        /* fn0BA8_175D every call   */
 
-    u16 pc = GW(0xF6BA);
-    u8 op = GB(pc);
+    u16 pc = Gw_wave_pc;
+    u8 op = wv_b(pc);
     if (op > 0x09) return;
 
     switch (op) {
 
     case 0x00:                                 /* CLEAR: rearm the sync    */
-        GW(0xF7C2) = 0x01;
-        GW(0xF6BA) = (u16)(pc + 1);
-        GW(0xF7C4) = 0x00;                     /* marker read cursor       */
+        Gw_wave_rearm = 0x01;
+        Gw_wave_pc = (u16)(pc + 1);
+        Gw_marker_idx = 0x00;                     /* marker read cursor       */
         break;
 
     case 0x01: {                               /* GETCHAR: wait on marker  */
-        i16 di = GI(0xF46C + GW(0xF7C4) * 2);  /* wF46C[wF7C4]             */
+        i16 di = G_vm_marker(Gw_marker_idx);      /* wF46C[wF7C4]             */
         i16 si = (di < 0) ? (i16)-di : di;
-        if ((i16)(u8)GB(pc + 1) != si) {       /* wrong shape: resync      */
+        if ((i16)(u8)wv_b(pc + 1) != si) {       /* wrong shape: resync      */
             path_vm_tick(1, 0);                /* fn0BA8_175D(ds, 1, 0)    */
-            GW(0xF7C0) = 0x01;
-            GW(0xF7C4) = 0x00;
+            Gw_wave_side = 0x01;
+            Gw_marker_idx = 0x00;
         } else if (di > 0) {                   /* shape ready: advance     */
-            GW(0xF6BA) = (u16)(pc + 2);
-            GW(0xF7C4) = (u16)(GW(0xF7C4) + 1);
+            Gw_wave_pc = (u16)(pc + 2);
+            Gw_marker_idx = (u16)(Gw_marker_idx + 1);
         } else {                               /* still building: décor    */
             decor_ring_vm_spawn();             /* fn0869_1946              */
-            GW(0x2505) = 0xC0;                 /* faster shape scaling     */
+            Gw_scale_budget = 0xC0;                 /* faster shape scaling     */
         }
         break;
     }
 
     case 0x02:                                 /* PUT: burst + wait-clear  */
-        if (GB(0x38A6) == 0x00) {
-            if (GW(0xF7C2) != 0x00) {
-                GW(0xF7C0) ^= 0x01;            /* flip the build side      */
-                GW(0xF7C2) = 0x00;
-                GW(0x2505) = 0x80;
+        if (Gb_wave_phase == 0x00) {
+            if (Gw_wave_rearm != 0x00) {
+                Gw_wave_side ^= 0x01;            /* flip the build side      */
+                Gw_wave_rearm = 0x00;
+                Gw_scale_budget = 0x80;
             }
-            if ((i16)GW(0xF480) > 0x04) GW(0xF480) = 0x00;
-            u16 rec = GW(pc + 1);
-            int count = (int)(i8)GB(0xA0 + rec);
-            GW(0xF6B8) = (count < 3) ? 0xFF : (u16)count;
-            const u8 *r = GPTR(0xA0 + rec + 1);
+            if ((i16)Gw_track_seg > 0x04) Gw_track_seg = 0x00;
+            u16 rec = wv_w(pc + 1);
+            int count = (int)(i8)wv_b(0xA0 + rec);
+            Gw_kill_ctr = (count < 3) ? 0xFF : (u16)count;
+            const u8 *r = wv_ptr(0xA0 + rec + 1);
             for (int n = 0; n < count; ++n) {  /* while (count--) spawn    */
                 spawn_enemy_rec(r);
                 r += 5;
             }
-            GB(0x38A6) = 0x01;
+            Gb_wave_phase = 0x01;
         }
-        if (GW(0xF46A) == 0x00) {              /* burst cleared            */
-            if ((i16)GW(0xF480) < 0x04) GW(0xF480) = (u16)(GW(0xF480) + 4);
-            GB(0x38A6) = 0x00;
-            GW(0xF6BA) = (u16)(pc + 3);
+        if (Gw_enemy_count == 0x00) {              /* burst cleared            */
+            if ((i16)Gw_track_seg < 0x04) Gw_track_seg = (u16)(Gw_track_seg + 4);
+            Gb_wave_phase = 0x00;
+            Gw_wave_pc = (u16)(pc + 3);
         }
         break;
 
     case 0x03:                                 /* WHILE dist > cmp         */
-        if ((i16)GW(0xF6C6) <= 0 &&
-            ((i16)GW(0xF6C6) != 0 || (i16)(i8)GB(pc + 1) >= (i16)GW(0xF6C4)))
-            GW(0xF6BA) = (u16)(pc + 4);
+        if ((i16)Gw_objective_hi <= 0 &&
+            ((i16)Gw_objective_hi != 0 || (i16)(i8)wv_b(pc + 1) >= (i16)Gw_objective_lo))
+            Gw_wave_pc = (u16)(pc + 4);
         else
-            GW(0xF6BA) = (u16)(GW(pc + 2) + 0xA0);
+            Gw_wave_pc = (u16)(wv_w(pc + 2) + 0xA0);
         break;
 
     case 0x04:                                 /* GOTO                     */
-        GW(0xF6BA) = (u16)(GW(pc + 1) + 0xA0);
+        Gw_wave_pc = (u16)(wv_w(pc + 1) + 0xA0);
         break;
 
     case 0x05:                                 /* SETDIST                  */
-        GW(0xF6C6) = 0x00;
-        GW(0xF6C4) = GW(pc + 1);
-        GW(0xF6BA) = (u16)(pc + 3);
+        Gw_objective_hi = 0x00;
+        Gw_objective_lo = wv_w(pc + 1);
+        Gw_wave_pc = (u16)(pc + 3);
         break;
 
     case 0x06:                                 /* GOSUB (1-deep)           */
-        GW(0xF7C6) = (u16)(pc + 3);            /* ptrF7C6 return offset    */
-        GW(0xF6BA) = (u16)(GW(pc + 1) + 0xA0);
+        Gw_wave_ret = (u16)(pc + 3);            /* ptrF7C6 return offset    */
+        Gw_wave_pc = (u16)(wv_w(pc + 1) + 0xA0);
         break;
 
     case 0x07:                                 /* RETURN                   */
-        GW(0xF6BA) = GW(0xF7C6);
+        Gw_wave_pc = Gw_wave_ret;
         break;
 
     case 0x08:                                 /* BEQ dist == 0            */
-        if ((GW(0xF6C4) | GW(0xF6C6)) == 0x00)
-            GW(0xF6BA) = (u16)(GW(pc + 1) + 0xA0);
+        if ((Gw_objective_lo | Gw_objective_hi) == 0x00)
+            Gw_wave_pc = (u16)(wv_w(pc + 1) + 0xA0);
         else
-            GW(0xF6BA) = (u16)(pc + 3);
+            Gw_wave_pc = (u16)(pc + 3);
         break;
 
     case 0x09:                                 /* WAVE: timed drip         */
-        switch (GB(0x38A6)) {
+        switch (Gb_wave_phase) {
         case 0x00:                             /* latch                    */
-            if (GW(0xF7C2) != 0x00) {
-                GW(0xF7C0) ^= 0x01;
-                GW(0xF7C2) = 0x00;
+            if (Gw_wave_rearm != 0x00) {
+                Gw_wave_side ^= 0x01;
+                Gw_wave_rearm = 0x00;
             }
-            GB(0xF7CA) = GB(pc + 3);           /* spawn count              */
-            if ((i16)(i8)GB(0xF7CA) > 0x02) GW(0xF6B8) = (u16)(u8)GB(0xF7CA);
-            else                             GW(0xF6B8) = 0xFF;
-            GW(0xF7CD) = GW(0xEA3E);           /* deadline = accum32       */
-            GW(0xF7CB) = GW(0xEA3C);
-            GB(0x38A6) = 0x01;
+            Gb_wave_count = wv_b(pc + 3);         /* spawn count              */
+            if ((i16)(i8)Gb_wave_count > 0x02) Gw_kill_ctr = (u16)(u8)Gb_wave_count;
+            else                             Gw_kill_ctr = 0xFF;
+            Gw_wave_deadline_hi = Gw_dist_hi;           /* deadline = accum32       */
+            Gw_wave_deadline_lo = Gw_dist_lo;
+            Gb_wave_phase = 0x01;
             break;
         case 0x01: {                           /* spawn one when due       */
-            i16 dh = (i16)GW(0xF7CD);
-            if (dh <= (i16)GW(0xEA3E) &&
-                (dh != (i16)GW(0xEA3E) || GW(0xF7CB) <= GW(0xEA3C))) {
-                u32 next = (((u32)GW(0xEA3E) << 16) | GW(0xEA3C)) + GB(pc + 4);
-                GW(0xF7CD) = (u16)(next >> 16);
-                GW(0xF7CB) = (u16)next;
-                spawn_enemy_rec(GPTR(GW(pc + 1) + 0xA1));  /* skip count byte */
-                GB(0xF7CA) = (u8)(GB(0xF7CA) - 1);
-                if (GB(0xF7CA) == 0x00) GB(0x38A6) = (u8)(GB(0x38A6) + 1);
+            i16 dh = (i16)Gw_wave_deadline_hi;
+            if (dh <= (i16)Gw_dist_hi &&
+                (dh != (i16)Gw_dist_hi || Gw_wave_deadline_lo <= Gw_dist_lo)) {
+                u32 next = (((u32)Gw_dist_hi << 16) | Gw_dist_lo) + wv_b(pc + 4);
+                Gw_wave_deadline_hi = (u16)(next >> 16);
+                Gw_wave_deadline_lo = (u16)next;
+                spawn_enemy_rec(wv_ptr(wv_w(pc + 1) + 0xA1));  /* skip count byte */
+                Gb_wave_count = (u8)(Gb_wave_count - 1);
+                if (Gb_wave_count == 0x00) Gb_wave_phase = (u8)(Gb_wave_phase + 1);
             }
             break;
         }
         case 0x02:                             /* wait until cleared       */
-            if (GW(0xF46A) == 0x00) {
-                GB(0x38A6) = 0x00;
-                GW(0xF6BA) = (u16)(pc + 5);
+            if (Gw_enemy_count == 0x00) {
+                Gb_wave_phase = 0x00;
+                Gw_wave_pc = (u16)(pc + 5);
             }
             break;
         }

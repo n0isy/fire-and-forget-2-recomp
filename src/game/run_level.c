@@ -49,7 +49,8 @@
  * All DGROUP access via gmem.h G-accessors (GB/GW/GI/GPTR).
  */
 #include "ff_game.h"
-#include "gmem.h"
+#include "gnames.h"
+#include "data/gamedata.h"   /* ffd_demo_tape / ffd_persp_ramp / ffd_pal_* */
 #include <string.h>
 
 /* bFFFFFFFE — run_level stack-local "READY-FOR-TAKE-OFF armed once" latch (the
@@ -84,16 +85,21 @@ static int s_muzzle;      /* local_22 — muzzle side, init 0x14, flips per shot
 /* Table builders (ported verbatim from the init's calls)                     */
 /* ========================================================================== */
 
+/* the runtime LUT blocks (declared in ff_game.h) — built below + render_world */
+u16 g_speed_tbl[0x100];   /* aF482 */
+u16 g_ramp_tbl[0x3F];     /* wDE6E */
+u16 g_shade_tbl[300];     /* aF209 */
+
 /* fn0869_158D (table part) — perspective LUTs from the base ramp a2CD5.
- *   DC84[i] = (u8)(a2CD5[i] * 100 >> 7)   (half-width LUT)
- *   E4CC[i] = (u8)(a2CD5[i] >> 1)         (scale LUT)
+ *   g_persp_halfw[i] (DC84) = (u8)(a2CD5[i] * 100 >> 7)   (half-width LUT)
+ *   g_persp_scale[i] (E4CC) = (u8)(a2CD5[i] >> 1)         (scale LUT)
  * (render_world.c rebuilds these per frame too; built here so the LUTs exist
  * immediately after init, exactly as fn0869_158D runs inside the prologue.) */
 static void build_persp_luts(void)
 {
     for (int si_24 = 0x00; si_24 < 0x0100; ++si_24) {
-        GB(0xDC84 + si_24) = (u8)((u16)GB(0x2CD5 + si_24) * 100 >> 0x07);
-        GB(0xE4CC + si_24) = (u8)(GB(0x2CD5 + si_24) >> 0x01);
+        g_persp_halfw[si_24] = (u8)((u16)ffd_persp_ramp[si_24] * 100 >> 0x07);
+        g_persp_scale[si_24] = (u8)(ffd_persp_ramp[si_24] >> 0x01);
     }
 }
 
@@ -101,7 +107,7 @@ static void build_persp_luts(void)
  * table aF209.  ptrLoc08_164 starts at &aF482[0] (0xF482, see .dis:1365). */
 static void build_speed_shade_tables(void)
 {
-    u16 *p = (u16 *)GPTR(0xF482);            /* ptrLoc08_164 = &aF482[0] */
+    u16 *p = g_speed_tbl;                    /* ptrLoc08_164 = &aF482[0] */
 
     p[0] = 0x00;                             /* aF482[0] = 0 (idle = STOPPED) */
     int wLoc04_163 = 0x00;
@@ -118,19 +124,19 @@ static void build_speed_shade_tables(void)
     }
     p[-1] = 0x20;                            /* ptrLoc08_164->wFFFE = 0x20 */
 
-    /* ramp LUT wDE6E:  wDE6E[0]=0;  wDE6E[s] = (s*0x100>>8)+1 = s+1, s=1..0x3E */
-    GW(0xDE6E) = 0x00;
+    /* ramp LUT wDE6E:  ramp[0]=0;  ramp[s] = (s*0x100>>8)+1 = s+1, s=1..0x3E */
+    g_ramp_tbl[0] = 0x00;
     for (int si_102 = 0x01; si_102 < 0x3F; ++si_102)
-        GW(0xDE6E + si_102 * 2) = (u16)((si_102 * 0x0100 >> 0x08) + 1);
+        g_ramp_tbl[si_102] = (u16)((si_102 * 0x0100 >> 0x08) + 1);
 
     /* shade table aF209[i] = wDE6E[aF482[i]]  for i = 0..0xFF */
     for (int si_104 = 0x00; si_104 < 0x0100; ++si_104)
-        GW(0xF209 + si_104 * 2) = GW(0xDE6E + GW(0xF482 + si_104 * 2) * 2);
+        g_shade_tbl[si_104] = g_ramp_tbl[g_speed_tbl[si_104]];
 
     /* tail: aF209[0x100..299] = wDEAE, wDEAE+1, ... */
-    u16 di_124 = GW(0xDEAE);
+    u16 di_124 = Gw_wDEAE;
     for (int si_125 = 0x0100; si_125 < 300; ++si_125) {
-        GW(0xF209 + si_125 * 2) = di_124;
+        g_shade_tbl[si_125] = di_124;
         ++di_124;
     }
 }
@@ -150,8 +156,8 @@ static void build_speed_shade_tables(void)
 static void free_entity_pool(void)
 {
     for (int si_42 = 0x00; si_42 < 0x14; ++si_42) {
-        GB(0xE5CC + si_42 * 0x33 + 0x00) = 0xFF;
-        GB(0xE5CC + si_42 * 0x33 + 0x2E) = 0x00;
+        *(ENT_BASE + si_42 * 0x33 + 0x00) = 0xFF;
+        *(ENT_BASE + si_42 * 0x33 + 0x2E) = 0x00;
     }
 }
 
@@ -160,63 +166,63 @@ static void free_entity_pool(void)
 /* ========================================================================== */
 void run_level_init(void)
 {
-    GB(0xF6DC) = 0x00;                        /* ds->bF6DC */
-    GB(0xF6DB) = 0x00;                        /* ds->bF6DB */
-    GB(0xF6DA) = 0x00;                        /* ds->bF6DA */
+    Gb_leader_sfx = 0x00;                        /* ds->bF6DC */
+    Gb_bF6DB = 0x00;                        /* ds->bF6DB */
+    Gb_obj_sfx_latch = 0x00;                        /* ds->bF6DA */
 
     free_entity_pool();                       /* fn0869_19E7 (pool-free part) */
 
-    GW(0xF468) = 0x00;                        /* ds->wF468 */
-    GW(0xDC7E) = 0x00;                        /* ds->wDC7E */
-    GB(0xEF4A) = 0x00;                        /* ds->tEF4A.u0 */
-    GB(0xDE5D) = 0x00;                        /* ds->tDE5D.u0 */
+    Gw_decor_density = 0x00;                        /* ds->wF468 */
+    Gw_decor_count = 0x00;                        /* ds->wDC7E */
+    Gb_ring_head = 0x00;                        /* ds->tEF4A.u0 */
+    Gb_ring_tail = 0x00;                        /* ds->tDE5D.u0 */
 
-    /* terrain-anim ring aDDEC: 10 entries (stride 0x0A), w0000/w0002 zeroed. */
+    /* the décor ring (was aDDEC): kind/side zeroed per entry. */
     for (int si_60 = 0x00; si_60 < 0x0A; ++si_60) {
-        GW(0xDDEC + si_60 * 0x0A + 0x00) = 0x00;   /* aDDEC[].w0000[si].w0000 */
-        GW(0xDDEC + si_60 * 0x0A + 0x02) = 0x00;   /* aDDEC[].w0002[si]       */
+        g_decor_ring[si_60].kind = 0x00;           /* aDDEC[].w0000[si].w0000 */
+        g_decor_ring[si_60].side = 0x00;           /* aDDEC[].w0002[si]       */
     }
 
-    GW(0xF6D1) = 0x00;                        /* ds->wF6D1 */
-    GW(0xEF52) = GW(0xDE69);                  /* ds->tEF52 = ds->tDE69 */
-    GW(0xF46A) = 0x00;                        /* ds->wF46A (live-enemy count) */
-    GB(0xF688) = 0x00;                        /* ds->bF688 (objective done)   */
-    GB(0xF6B8) = 0xFF;                        /* ds->tF6B8.u0 */
-    GW(0x27D3) = 0x00;                        /* ds->w27D3 */
-    GB(0x27D1) = 0x00;                        /* ds->t27D1.u0 */
-    GB(0xF085) = 0x00;                        /* ds->tF085.u0 */
+    Gw_shot_count = 0x00;                        /* ds->wF6D1 */
+    Gw_spr_count = Gw_spr_count_saved;                  /* ds->tEF52 = ds->tDE69 */
+    Gw_enemy_count = 0x00;                        /* ds->wF46A (live-enemy count) */
+    Gb_obj_done = 0x00;                        /* ds->bF688 (objective done)   */
+    Gb_kill_ctr = 0xFF;                        /* ds->tF6B8.u0 */
+    Gw_bonus_hi = 0x00;                        /* ds->w27D3 */
+    Gb_bonus_lo = 0x00;                        /* ds->t27D1.u0 */
+    Gb_cflash_spr = 0x00;                        /* ds->tF085.u0 */
     /* fn0BA8_13FD(ds, 1): arm the level script — handled by vm_step() which
      * (re)initialises its PC on the level transition (vm.c).                 */
 
     build_speed_shade_tables();               /* fn0869_1480 (1st call): aF482, wDE6E, aF209 */
 
-    GW(0x24F5) = 0x0140;                      /* ds->w24F5  playfield width  (0x140) */
-    GB(0x24F3) = 0x98;                        /* ds->t24F3.u0 playfield height (0x98) */
-    GW(0x24F7) = 0x00;                        /* ds->w24F7 */
-    GW(0xDD84) = 0x00;                        /* ds->wDD84  (scroll/turn x)  */
-    GW(0xDD86) = 0x87;                        /* ds->wDD86  (horizon/pitch)  */
-    GW(0x24E7) = 0x00;                        /* ds->w24E7 */
-    GW(0x24E9) = 0x00;                        /* ds->w24E9 */
-    GB(0xDE50) = 0x00;                        /* ds->bDE50 */
-    GB(0xDE52) = 0x01;                        /* ds->bDE52 */
-    GB(0xDE51) = 0x00;                        /* ds->bDE51 */
-    GW(0xF6AF) = 0x00;                        /* ds->wF6AF  (game mode = drive) */
-    GW(0xEA3E) = 0x00;                        /* ds->wEA3E  (scroll accum hi)  */
-    GW(0xEA3C) = 0x00;                        /* ds->tEA3C.u0 (scroll accum lo) */
-    GW(0xF1FD) = 0xA0;                        /* ds->wF1FD  (player/crosshair x) */
-    GW(0xE4CA) = 0x00;                        /* ds->wE4CA */
-    GW(0xE9CC) = 0x00;                        /* ds->tE9CC.u0 (scroll speed)  */
-    GW(0xDC6C) = 0x3F;                        /* ds->wDC6C  (road/invuln timer) */
+    Gw_playfield_w = 0x0140;                      /* ds->w24F5  playfield width  (0x140) */
+    Gb_playfield_h = 0x98;                        /* ds->t24F3.u0 playfield height (0x98) */
+    Gw_w24F7 = 0x00;                        /* ds->w24F7 */
+    Gw_car_x = 0x00;                        /* ds->wDD84  (scroll/turn x)  */
+    Gw_horizon = 0x87;                        /* ds->wDD86  (horizon/pitch)  */
+    Gw_w24E7 = 0x00;                        /* ds->w24E7 */
+    Gw_w24E9 = 0x00;                        /* ds->w24E9 */
+    Gb_panel_msg = 0x00;                        /* ds->bDE50 */
+    Gb_panel_state = 0x01;                        /* ds->bDE52 */
+    Gb_panel_delay = 0x00;                        /* ds->bDE51 */
+    Gw_game_mode = 0x00;                        /* ds->wF6AF  (game mode = drive) */
+    Gw_dist_hi = 0x00;                        /* ds->wEA3E  (scroll accum hi)  */
+    Gw_dist_lo = 0x00;                        /* ds->tEA3C.u0 (scroll accum lo) */
+    Gw_road_center = 0xA0;                        /* ds->wF1FD  (player/crosshair x) */
+    Gw_wE4CA = 0x00;                        /* ds->wE4CA */
+    Gw_speed = 0x00;                        /* ds->tE9CC.u0 (scroll speed)  */
+    Gw_fuel_window = 0x3F;                        /* ds->wDC6C  (road/invuln timer) */
 
     g_throttle = 0x00;                        /* di_1195 = 0 (throttle local)  */
 
-    if (GW(0xDC78) < 0x08) GW(0xDC78) = 0x08; /* if (ds->wDC78 < 8) = 8 */
-    if (GW(0xE9C8) < 0x04) GW(0xE9C8) = 0x04; /* if (ds->wE9C8 < 4) = 4 */
+    if (Gw_kero < 0x08) Gw_kero = 0x08; /* if (ds->wDC78 < 8) = 8 */
+    if (Gw_missile_fuel < 0x04) Gw_missile_fuel = 0x04; /* if (ds->wE9C8 < 4) = 4 */
 
-    GW(0xF6A9) = 0x00;                        /* ds->wF6A9 */
-    GB(0xDC6E) = 0x00;                        /* ds->bDC6E  (anim step)       */
-    GB(0xF6B1) = 0x00;                        /* ds->bF6B1 */
-    GB(0xDE6D) = 0x00;                        /* ds->bDE6D */
+    Gw_flash_timer = 0x00;                        /* ds->wF6A9 */
+    Gb_stage_clear = 0x00;                        /* ds->bDC6E  (anim step)       */
+    Gb_player_hit = 0x00;                        /* ds->bF6B1 */
+    Gb_crash_ctr = 0x00;                        /* ds->bDE6D */
 
     /* tDC68 = PLAYER LIVES/vehicles: NOT reset here — the original run_level
      * prologue does NOT touch it. It is set to 4 by the GAME START (menu
@@ -224,31 +230,31 @@ void run_level_init(void)
      * and CARRIES ACROSS STAGES (start_level fn0DAE_03AA does not reset it). So a
      * per-stage reset here would wrongly refill lives on the stage advance. */
 
-    memset(GPTR(0xF462), 0x00, 6);            /* zero 6 bytes @0xF462 (ghidra) */
+    memset(Gp_hud_weapon_vars, 0x00, 6);            /* zero 6 bytes @0xF462 (ghidra) */
 
-    GB(0xF6D3) = 0x01;                        /* ds->bF6D3 */
+    Gb_hud_phase = 0x01;                        /* ds->bF6D3 */
 
     /* fn0869_158D: perspective LUTs + curve-pointer/scroll-phase reset. */
-    GW(0xE9CE) = 0x00;                        /* ds->wE9CE */
-    GW(0xF480) = 0x00;                        /* ds->wF480 */
+    Gw_wE9CE = 0x00;                        /* ds->wE9CE */
+    Gw_track_seg = 0x00;                        /* ds->wF480 */
     build_persp_luts();                       /* E4CC / DC84 from a2CD5 */
 
     /* fn1187_01C8 / the w24F9==4 title-screen branch / fn1187_2A6F / 2ABC /
      * fn0BA8_203A are HUD/score/title-sprite setup not driven by the five ported
      * subsystems; intentionally omitted from this slice.                      */
 
-    GB(0x40A7) = 0x00;                        /* ds->b40A7 */
-    GB(0x40A2) = 0x00;                        /* ds->b40A2 */
-    GB(0xDC6A) = 0x01;                        /* ds->bDC6A */
-    GB(0xEF56) = 0x00;                        /* ds->bEF56 */
-    GB(0xF461) = 0x00;                        /* ds->bF461 */
+    Gb_b40A7 = 0x00;                        /* ds->b40A7 */
+    Gb_exit_flag = 0x00;                        /* ds->b40A2 */
+    Gb_carrier_flag = 0x01;                        /* ds->bDC6A */
+    Gb_pickup_banner = 0x00;                        /* ds->bEF56 */
+    Gb_rle_count = 0x00;                        /* ds->bF461 */
 
-    GW(0x2845) = 0x08;                         /* ds->w2845 (throttle increment) */
+    Gw_throttle_step = 0x08;                         /* ds->w2845 (throttle increment) */
 
     build_speed_shade_tables();               /* fn0869_1480 (2nd call, idempotent) */
 
-    GW(0x24E9) = 0x00;                        /* ds->w24E9 */
-    GW(0x24E7) = 0x00;                        /* ds->w24E7 */
+    Gw_w24E9 = 0x00;                        /* ds->w24E9 */
+    Gw_w24E7 = 0x00;                        /* ds->w24E7 */
 
     /* ds->t24F1 = 3; while (ds->t24F1 == 3) ;  — the VBL spin: the platform now
      * drives one frame per run_level_frame() call, so it is dropped here.      */
@@ -265,9 +271,9 @@ void run_level_init(void)
      * value, not 0xA0). */
 
     /* Demo input replay state (fn1069_0006 init lines 1133-1135): */
-    GB(0xF461) = 0x00;                          /* d271 run-length counter = 0 */
-    GW(0xF682) = 0x2849;                        /* d492 stream ptr -> 0x2849   */
-    GW(0xF480) = 0x01;                          /* wF480: fn0869_158D ++ -> 1  */
+    Gb_rle_count = 0x00;                          /* d271 run-length counter = 0 */
+    Gw_rle_ptr = 0x2849;                        /* d492 stream ptr -> 0x2849   */
+    Gw_track_seg = 0x01;                          /* wF480: fn0869_158D ++ -> 1  */
     track_reset();                              /* fn0869_158D: tF6CD = slot 0 */
 
     /* HUD score state: the original run_level prologue (fn0869_0006 @34-35 /
@@ -276,12 +282,12 @@ void run_level_init(void)
      * attract_state) and CARRIES ACROSS STAGES (start_level does not touch it), so
      * stage 2 continues the stage-1 score. HIGH (27cd:27cf) also persists (loaded
      * from the HIGH file by ff_load_high at boot). */
-    GW(0x27D1) = 0x00; GW(0x27D3) = 0x00;       /* bonus = 0 (per-stage) */
+    Gw_bonus_lo = 0x00; Gw_bonus_hi = 0x00;       /* bonus = 0 (per-stage) */
 
     /* Objective panel (fn1069_0006 line ~1071): arm message 0 "BEFORE VISUAL
      * CONTACT" (bc60=0, bc62=1). The distance counter d4d4 (@0xF6C4) is set by the
      * level-script op5 SETCNT=10000; shown as (d4d4>>4) at the panel top. */
-    GD(0xF6C4) = 10000;                          /* d4d4 = SETCNT 0x2710 */
+    Gd_objective = 10000;                          /* d4d4 = SETCNT 0x2710 */
     s_takeoff_latch = 1;                          /* bFFFFFFFE re-armed on level entry */
     /* `t24F1 = 3; while (t24F1 == 3);` (@119) — the entry spin ends right after
      * an ISR decrement: t24F1 == 2. Three ENVIRONMENT-DERIVED initials, all
@@ -296,7 +302,7 @@ void run_level_init(void)
      *    (ours shifted -1 by the capture alignment sim[i] == orig[i+1]).
      *  - the décor spawn accumulator wFFFFFFF2 is also uninitialized: measured
      *    0x2540 at entry (menu stack residue) — see decor_reset(). */
-    GI(0x24F1) = 0x02;
+    Gi_tick_timer = 0x02;
     s_isr18 = 9;                                  /* decs at the ends of our frames 8/26/44 */
     s_c2 = 0;
     s_c0 = 0;
@@ -326,8 +332,8 @@ void run_level_init(void)
      * expansion (v<<2)|(v>>4), exactly as the VGA DAC outputs. (The EGA branch —
      * ATC table @0x3674 — is NOT used on the VGA reference.) */
     {
-        const u8 *pal   = GPTR(0x363E);
-        const u8 *patch = (GI(0x27C7) < 2) ? GPTR(0x3671) : GPTR(0x366E);
+        const u8 *pal   = (const u8 *)ffd_pal_race;
+        const u8 *patch = (Gi_stage < 2) ? ffd_pal_patch_lo : ffd_pal_patch_hi;
         for (int i = 0; i < 16; i++)
             for (int ch = 0; ch < 3; ch++) {
                 u8 v = (i == 2) ? patch[ch] : pal[i * 3 + ch];
@@ -359,31 +365,41 @@ static const u8 *s_tape;
 static int s_tape_len, s_tape_idx;
 void demo_input_set_tape(const u8 *tape, int len) { s_tape = tape; s_tape_len = len; s_tape_idx = 0; }
 
+/* RLE stream byte: d492 keeps the ORIGINAL offset convention (base 0x2849, so
+ * the F682 trace column is unchanged) but the bytes come from the named
+ * ffd_demo_tape data, not from G. Beyond the 217 recorded pairs the original
+ * read zero bytes (nothing follows the region) — reproduced by the guard. */
+static u8 rle_byte(u16 off)
+{
+    u16 rel = (u16)(off - 0x2849);
+    return (rel < sizeof(RlePair) * 217) ? ((const u8 *)ffd_demo_tape)[rel] : 0x00;
+}
+
 void demo_input_step(void)
 {
     if (s_tape) {                          /* external tape drives the input */
-        GB(0xF6EC) = (s_tape_idx < s_tape_len) ? s_tape[s_tape_idx] : 0x00;
+        Gb_input_mask = (s_tape_idx < s_tape_len) ? s_tape[s_tape_idx] : 0x00;
         ++s_tape_idx;
-    } else if (GB(0xF461) == 0) {          /* d271 == 0 -> read next RLE pair */
-        u16 p = GW(0xF682);                /* d492 (DGROUP offset)        */
-        GB(0xF461) = GB(p);                /* d271 = stream[0] (count)    */
-        GB(0xF6EC) = GB(p + 1);            /* d4fc = stream[1] (mask)     */
-        GW(0xF682) = (u16)(p + 2);         /* d492 += 2                   */
+    } else if (Gb_rle_count == 0) {          /* d271 == 0 -> read next RLE pair */
+        u16 p = Gw_rle_ptr;                /* d492 (offset, base 0x2849)  */
+        Gb_rle_count = rle_byte(p);          /* d271 = stream[0] (count)    */
+        Gb_input_mask = rle_byte(p + 1);      /* d4fc = stream[1] (mask)     */
+        Gw_rle_ptr = (u16)(p + 2);         /* d492 += 2                   */
     } else {
-        GB(0xF461) = (u8)(GB(0xF461) - 1);
+        Gb_rle_count = (u8)(Gb_rle_count - 1);
     }
-    u8 m = GB(0xF6EC);                      /* d4fc */
-    GW(0x24B7) = (u16)(m & 0x01);           /* 202c7 fire        */
-    GW(0x24B9) = (u16)(m & 0x02);           /* 202c9             */
-    GW(0x24BF) = (u16)(m & 0x04);           /* 202cf steer left  */
-    GW(0x24C1) = (u16)(m & 0x08);           /* 202d1 steer right */
-    GW(0x24BB) = (u16)(m & 0x10);           /* 202cb accelerate  */
-    GW(0x24BD) = (u16)(m & 0x20);           /* 202cd brake       */
-    GW(0xF6F4) = (u16)(m & 0x40);           /* d4c4              */
-    GW(0xF6C2) = (u16)(m & 0x80);           /* d4d2              */
+    u8 m = Gb_input_mask;                      /* d4fc */
+    Gw_btn_fire = (u16)(m & 0x01);           /* 202c7 fire        */
+    Gw_btn_start = (u16)(m & 0x02);           /* 202c9             */
+    Gw_btn_right = (u16)(m & 0x04);           /* 202cf steer left  */
+    Gw_btn_left = (u16)(m & 0x08);           /* 202d1 steer right */
+    Gw_btn_accel = (u16)(m & 0x10);           /* 202cb accelerate  */
+    Gw_btn_brake = (u16)(m & 0x20);           /* 202cd brake       */
+    Gw_chord_edge = (u16)(m & 0x40);           /* d4c4              */
+    Gw_btn_takeoff = (u16)(m & 0x80);           /* d4d2              */
     /* poll_controls fn0A0D_0002 @129: the MISSILE button comes straight from
      * the demo mask: wF6B4 = bF6EC & 0x40. */
-    GW(0xF6B4) = (u16)(m & 0x40);
+    Gw_btn_missile = (u16)(m & 0x40);
 }
 
 /* ========================================================================== */
@@ -403,57 +419,57 @@ void demo_input_step(void)
  * vs the QEMU capext: speed ramp 24->32 and horizon climb match frame-for-frame. */
 static void game_mode_step(void)
 {
-    u16 mode = GW(0xF6AF);
+    u16 mode = Gw_game_mode;
     if (mode > 0x04) return;
     switch (mode) {
     case 0x00:                                          /* 0x10a48 — GROUND */
-        if (g_throttle >= 0xC0 && GW(0xDC78) != 0) {   /* di_1195>=0xC0 && wDC78 */
-            if (GW(0xF6C2) != 0) {
-                GW(0xF6AF) = 0x02;                      /* -> takeoff (case 2)    */
+        if (g_throttle >= 0xC0 && Gw_kero != 0) {   /* di_1195>=0xC0 && wDC78 */
+            if (Gw_btn_takeoff != 0) {
+                Gw_game_mode = 0x02;                      /* -> takeoff (case 2)    */
             } else if (s_takeoff_latch != 0) {
                 s_takeoff_latch = 0;
-                GB(0xDE50) = 0x02;     /* msg 2 = READY FOR TAKE OFF */
-                GB(0xDE51) = 0x03;     /* re-arm delay               */
-                GB(0xDE52) = 0x01;     /* arm typewriter             */
+                Gb_panel_msg = 0x02;     /* msg 2 = READY FOR TAKE OFF */
+                Gb_panel_delay = 0x03;     /* re-arm delay               */
+                Gb_panel_state = 0x01;     /* arm typewriter             */
             }
         } else {
             s_takeoff_latch = 0x01;
         }
         break;
     case 0x01:                                          /* 0x10a86 — FLIGHT */
-        if (GW(0xF6C2) != 0 || GW(0xDC78) == 0 || GB(0xDC6E) != 0) {
-            GW(0xF6AF) = 0x03;                           /* -> landing */
-            GB(0xDE50) = 0x01; GB(0xDE51) = 0x02; GB(0xDE52) = 0x01;   /* msg 1 LANDING */
+        if (Gw_btn_takeoff != 0 || Gw_kero == 0 || Gb_stage_clear != 0) {
+            Gw_game_mode = 0x03;                           /* -> landing */
+            Gb_panel_msg = 0x01; Gb_panel_delay = 0x02; Gb_panel_state = 0x01;   /* msg 1 LANDING */
         }
         break;
     case 0x02:                                          /* 0x10ab3 — TAKEOFF */
-        if (g_throttle < 0x100) g_throttle += (i16)GW(0x2845);   /* throttle += 8 */
-        g_roll -= (i16)GW(0x24FF);                       /* roll -= blink parity (0/1) */
-        if ((i16)GW(0xDD86) < 0x80 && g_throttle > 0xFF) GW(0xF6AF) = 0x01;  /* -> flight */
+        if (g_throttle < 0x100) g_throttle += (i16)Gw_throttle_step;   /* throttle += 8 */
+        g_roll -= (i16)Gw_blink;                       /* roll -= blink parity (0/1) */
+        if ((i16)Gw_horizon < 0x80 && g_throttle > 0xFF) Gw_game_mode = 0x01;  /* -> flight */
         break;
     case 0x03:                                          /* 0x10ada — LANDING */
         if (g_throttle > 0xC0) {
-            g_throttle -= (i16)GW(0x2845);
+            g_throttle -= (i16)Gw_throttle_step;
             if (g_throttle < 0xC0) g_throttle = 0xC0;
         }
-        if ((i16)GW(0xDD86) == 0x87 && g_roll == 0 && g_throttle < 0xC1)
-            GW(0xF6AF) = 0x00;                           /* -> ground */
+        if ((i16)Gw_horizon == 0x87 && g_roll == 0 && g_throttle < 0xC1)
+            Gw_game_mode = 0x00;                           /* -> ground */
         else
             g_roll += 2;
         break;
     case 0x04:                                          /* 0x10b10 — CRASH */
-        if ((i16)GW(0xDD84) != 0) GW(0xDD84) = (u16)((i16)GW(0xDD84) >> 1);
+        if ((i16)Gw_car_x != 0) Gw_car_x = (u16)((i16)Gw_car_x >> 1);
         if (g_throttle != 0) g_throttle -= 2;
-        if ((i16)GW(0xDD86) < 0x87) g_roll += 2;
-        if (GB(0xDE6D) == 0x00 && g_throttle < 1) {
+        if ((i16)Gw_horizon < 0x87) g_roll += 2;
+        if (Gb_crash_ctr == 0x00 && g_throttle < 1) {
             g_throttle = 0;
-            if ((i16)GW(0xDC68) < 0) {                   /* out of lives -> game over */
-                GB(0xDE50) = 0x0B; GB(0xDE51) = 0x1E; GB(0xDE52) = 0x01;   /* msg 11 */
+            if ((i16)Gw_lives < 0) {                   /* out of lives -> game over */
+                Gb_panel_msg = 0x0B; Gb_panel_delay = 0x1E; Gb_panel_state = 0x01;   /* msg 11 */
             } else {
-                if (GB(0xDC6E) == 0x00) GW(0xDC68) -= 1; /* lose one vehicle */
-                if ((i16)GW(0xDC68) >= 0) {              /* respawn */
-                    GW(0xDC6C) = 0x3F;
-                    if (GW(0xDC78) < 8) GW(0xDC78) = 8;
+                if (Gb_stage_clear == 0x00) Gw_lives -= 1; /* lose one vehicle */
+                if ((i16)Gw_lives >= 0) {              /* respawn */
+                    Gw_fuel_window = 0x3F;
+                    if (Gw_kero < 8) Gw_kero = 8;
                     /* reko 0869:244-245: the respawn arms the DAMAGE-FLASH /
                      * INVULN window — wF6A9 = 8 flash-ticks (decremented once
                      * per 20-frame cycle = ~160 frames) with the respawn flash
@@ -463,12 +479,12 @@ static void game_mode_step(void)
                      * (Was wrongly dropped as "sound/state" — caught by the L3
                      * gas run: the BOMBE TH detonation inside the post-respawn
                      * window crashed the port but only flashed the original.) */
-                    GW(0xF6A9) = 0x08;
-                    GW(0xF203) = 0x0A;
-                    GW(0xF6AF) = 0x03;                   /* -> landing (fly back in) */
-                    GW(0xDD86) = (u16)(-0x14);           /* horizon = -0x14 */
+                    Gw_flash_timer = 0x08;
+                    Gw_flash_colour = 0x0A;
+                    Gw_game_mode = 0x03;                   /* -> landing (fly back in) */
+                    Gw_horizon = (u16)(-0x14);           /* horizon = -0x14 */
                     g_roll = 4;
-                    GB(0xDE52) = 0x01; GB(0xDE50) = 0x00; GB(0xDE51) = 0x05;   /* msg 0 */
+                    Gb_panel_state = 0x01; Gb_panel_msg = 0x00; Gb_panel_delay = 0x05;   /* msg 0 */
                 }
             }
         }
@@ -482,15 +498,15 @@ static void game_mode_step(void)
  * spurious switch occurs (bDC6F==0, t24F1&4==0), so msg stays as armed. */
 static void panel_objective_triggers(void)
 {
-    if (GB(0xDE51) == 0x00 && GB(0xDE52) == 0x00) {
-        if (GB(0xDC6F) != 0x00 && (GW(0x24F1) & 0x04) != 0x00) {
-            if (GB(0xDE50) != 0x03) { GB(0xDE52) = 0x01; GB(0xDE50) = 0x03; }  /* DEMO MODE */
-        } else if ((GW(0xF6C4) | GW(0xF6C6)) != 0x00) {   /* objective distance left */
-            if (GB(0xDE50) != 0x00) { GB(0xDE52) = 0x01; GB(0xDE50) = 0x00; }  /* BEFORE VISUAL */
+    if (Gb_panel_delay == 0x00 && Gb_panel_state == 0x00) {
+        if (Gb_demo_flag != 0x00 && (Gw_tick_timer & 0x04) != 0x00) {
+            if (Gb_panel_msg != 0x03) { Gb_panel_state = 0x01; Gb_panel_msg = 0x03; }  /* DEMO MODE */
+        } else if ((Gw_objective_lo | Gw_objective_hi) != 0x00) {   /* objective distance left */
+            if (Gb_panel_msg != 0x00) { Gb_panel_state = 0x01; Gb_panel_msg = 0x00; }  /* BEFORE VISUAL */
         } else {
-            if (GB(0xF6DA) == 0x00 && GW(0xF6A9) == 0x00 && (i16)GW(0xDC68) >= 0)
-                GB(0xF6DA) = 0x01;     /* fn143A_05B7 objective sound — skipped */
-            if (GB(0xDE50) != 0x06) { GB(0xDE52) = 0x01; GB(0xDE50) = 0x06; }  /* LEADER SPOTTED */
+            if (Gb_obj_sfx_latch == 0x00 && Gw_flash_timer == 0x00 && (i16)Gw_lives >= 0)
+                Gb_obj_sfx_latch = 0x01;     /* fn143A_05B7 objective sound — skipped */
+            if (Gb_panel_msg != 0x06) { Gb_panel_state = 0x01; Gb_panel_msg = 0x06; }  /* LEADER SPOTTED */
         }
     }
 }
@@ -503,34 +519,34 @@ static void player_fire_step(void)
 {
     /* GUN (w24B7): 4-frame cadence (cooldown 3), free slot scan 15..19,
      * template = prototype[0] @0x1490 (type 0 smart bomb). */
-    if (GW(0x24B7) == 0x00) {
+    if (Gw_btn_fire == 0x00) {
         s_fire_cd = 0x00;
-    } else if (s_fire_cd != 0x00 || GW(0xDC6C) == 0x00) {
+    } else if (s_fire_cd != 0x00 || Gw_fuel_window == 0x00) {
         --s_fire_cd;
     } else {
         s_fire_cd = 0x03;
         int sl = 0x0F;
-        u8 *p = (u8 *)&G + 0xE5CC + 0x0F * 0x33;
+        u8 *p = ENT_BASE + 0x0F * 0x33;
         while ((i8)p[0] >= 0 && sl < 0x14) { p += 0x33; ++sl; }
         if (sl < 0x14) {
-            memcpy(p, GPTR(0x1490), 0x33);
-            *(u16 *)(p + 0x23) = GW(0xE9CC);            /* timer = speed */
-            if (GW(0xF6AF) == 0x00) {
+            memcpy(p, Gp_proto_gun, 0x33);
+            *(u16 *)(p + 0x23) = Gw_speed;            /* timer = speed */
+            if (Gw_game_mode == 0x00) {
                 i16 aim = (i16)((s_road_lean + g_steer_lean) * 2);
                 if (aim > 0x06) aim = 0x06;
                 else if (aim < -0x06) aim = -0x06;
-                aim = (i16)(aim + ((i16)GW(0xDD84) >> 6));
-                if ((i16)GW(0xDD84) < 0) aim += 1;      /* round toward 0 */
+                aim = (i16)(aim + ((i16)Gw_car_x >> 6));
+                if ((i16)Gw_car_x < 0) aim += 1;      /* round toward 0 */
                 *(i16 *)(p + 0x25) = aim;
-                *(i16 *)(p + 0x05) = (i16)(0x87 - (i16)GW(0xDD86));
-                *(i16 *)(p + 0x07) = (i16)((i16)GW(0xDD84) * 2 + g_steer_lean * 8 + s_muzzle);
+                *(i16 *)(p + 0x05) = (i16)(0x87 - (i16)Gw_horizon);
+                *(i16 *)(p + 0x07) = (i16)((i16)Gw_car_x * 2 + g_steer_lean * 8 + s_muzzle);
             } else {
                 *(i16 *)(p + 0x25) = 0x00;
-                *(i16 *)(p + 0x05) = (i16)(0x95 - (i16)GW(0xDD86));
-                *(i16 *)(p + 0x07) = (i16)((i16)GW(0xDD84) * 2 + s_muzzle);
+                *(i16 *)(p + 0x05) = (i16)(0x95 - (i16)Gw_horizon);
+                *(i16 *)(p + 0x07) = (i16)((i16)Gw_car_x * 2 + s_muzzle);
             }
             s_muzzle = -s_muzzle;                       /* twin barrels alternate */
-            u32 z = (((u32)GW(0xEA3E) << 16) | GW(0xEA3C)) + 3;
+            u32 z = (((u32)Gw_dist_hi << 16) | Gw_dist_lo) + 3;
             *(u16 *)(p + 0x15) = (u16)z;
             *(u16 *)(p + 0x17) = (u16)(z >> 16);
             /* fn143A_027B(0) gun sfx — omitted */
@@ -540,18 +556,18 @@ static void player_fire_step(void)
     /* MISSILE (wF6B4 = demo-mask bit 0x40): needs fuel (wE9C8) + the race
      * window (wDC6C); free slot scan 14..1 DOWNWARD; template = prototype[1]
      * @0x14C3 (type 1 homing missile); consumes one fuel unit. */
-    if (GW(0xF6B4) != 0x00 && GW(0xE9C8) != 0x00 && GW(0xDC6C) != 0x00) {
+    if (Gw_btn_missile != 0x00 && Gw_missile_fuel != 0x00 && Gw_fuel_window != 0x00) {
         int sl = 0x0E;
-        u8 *p = (u8 *)&G + 0xE5CC + 0x0E * 0x33;
+        u8 *p = ENT_BASE + 0x0E * 0x33;
         while ((i8)p[0] >= 0 && sl != 0) { p -= 0x33; --sl; }
         if (sl != 0) {
-            GW(0xE9C8) -= 1;
-            memcpy(p, GPTR(0x14C3), 0x33);
-            *(i16 *)(p + 0x07) = (i16)((i16)GW(0xDD84) * 2);
-            *(i16 *)(p + 0x05) = (i16)(0x95 - (i16)GW(0xDD86));
-            *(i16 *)(p + 0x11) = (i16)GW(0xE9CC);       /* vz = speed */
-            *(i16 *)(p + 0x03) = (i16)(3 - (i16)GW(0xE9CC));
-            u32 z = (((u32)GW(0xEA3E) << 16) | GW(0xEA3C)) + 3 - GW(0xE9CC);
+            Gw_missile_fuel -= 1;
+            memcpy(p, Gp_proto_missile, 0x33);
+            *(i16 *)(p + 0x07) = (i16)((i16)Gw_car_x * 2);
+            *(i16 *)(p + 0x05) = (i16)(0x95 - (i16)Gw_horizon);
+            *(i16 *)(p + 0x11) = (i16)Gw_speed;       /* vz = speed */
+            *(i16 *)(p + 0x03) = (i16)(3 - (i16)Gw_speed);
+            u32 z = (((u32)Gw_dist_hi << 16) | Gw_dist_lo) + 3 - Gw_speed;
             *(u16 *)(p + 0x15) = (u16)z;
             *(u16 *)(p + 0x17) = (u16)(z >> 16);
             /* fn143A_027B(0x14) missile sfx — omitted */
@@ -568,38 +584,38 @@ static void player_fire_step(void)
  * decays otherwise. Only game_mode 0 (the demo) is ported here. */
 static void car_column_step(void)
 {
-    int col = ((i16)GW(0xDD84) + 0xA0) >> 5;       /* wDD84 += 0xA0; wFFFFFFD0 = >>5 */
+    int col = ((i16)Gw_car_x + 0xA0) >> 5;       /* wDD84 += 0xA0; wFFFFFFD0 = >>5 */
     g_car_row = 4;                                 /* local_30 default (ground row) */
     g_rotor = 0;                                   /* local_34 default (no rotor)   */
-    if (GW(0xF6AF) == 0x00) {                      /* switch#2 case 0x11244 (ground) */
+    if (Gw_game_mode == 0x00) {                      /* switch#2 case 0x11244 (ground) */
         i16 curve = (i16)track_curve_now();        /* (tF6CD.u1)->b0000 */
-        int si_2063 = (((i16)GW(0xE9CC) * (i16)(curve >> 3)) >> 4) + s_lean_acc;
+        int si_2063 = (((i16)Gw_speed * (i16)(curve >> 3)) >> 4) + s_lean_acc;
         s_road_lean = si_2063;                     /* local_14 (=si_2063) — read by the gun aim */
         col -= si_2063 + g_steer_lean;             /* -= si_2063 + tFFFFFFB0 */
         if (g_decel_e6 != 0) {
             if (s_lean_dir == 0) s_lean_dir = (col > 4) ? -1 : 1;
             s_lean_acc += s_lean_dir;
-        } else if (s_lean_acc != 0 && GW(0xE9CC) != 0) {
+        } else if (s_lean_acc != 0 && Gw_speed != 0) {
             s_lean_dir = 0;
             if (s_lean_acc == -1) s_lean_acc = 0; else s_lean_acc >>= 1;
         }
         /* @1654-1656: wheel-dust when cornering hard. The `local_24=0x3b-24ff`
          * assignment is UNCONDITIONAL on 24ff (24ff only gates the omitted sfx). */
-        if (GW(0xE9CC) != 0 && (si_2063 > 3 || si_2063 < -3))
-            g_dust = 0x3B - (i16)GW(0x24FF);
+        if (Gw_speed != 0 && (si_2063 > 3 || si_2063 < -3))
+            g_dust = 0x3B - (i16)Gw_blink;
         /* (engine-screech sound at @643-648 omitted) */
         g_car_row = 4;                             /* local_30 = 4 */
         if (col < 0) col = 0; else if (col > 9) col = 9;   /* @1659: clamp (case 0 only) */
-    } else if (GW(0xF6AF) == 0x01) {              /* switch#2 case 0x11303 (FLIGHT) */
+    } else if (Gw_game_mode == 0x01) {              /* switch#2 case 0x11303 (FLIGHT) */
         if (g_steer_flag == 1) { if (col < 8) col = 0x0B; }
         else if (g_steer_flag == 2 && col > 1) col = 10;
-        i16 bb96 = (i16)GW(0xDD86);                /* car sprite row + rotor by altitude */
+        i16 bb96 = (i16)Gw_horizon;                /* car sprite row + rotor by altitude */
         if (bb96 < 0x2B)      { g_car_row = 0; g_rotor = 0x17; }
         else if (bb96 < 0x62) { g_car_row = 1; g_rotor = 0x16; }
         else                  { g_car_row = 2; g_rotor = 0x15; }
         if (g_roll > 0 && g_car_row != 0) --g_car_row;   /* bank by roll */
         if (g_roll < 0 && g_car_row != 2) ++g_car_row;
-    } else if (GW(0xF6AF) == 0x02 || GW(0xF6AF) == 0x03) {
+    } else if (Gw_game_mode == 0x02 || Gw_game_mode == 0x03) {
         /* switch#2 case 0x11377 — TAKEOFF *AND* LANDING. PROVEN BY THE JUMP
          * TABLE @1069:0baa (EXE file 0x203A): [0xbb4, 0xc73, 0xce7, 0xce7,
          * 0xd20] — modes 2 AND 3 both target 0x11377 (the winged row-3 car +
@@ -609,11 +625,11 @@ static void car_column_step(void)
          * ground car (row 4, no rotor) during the respawn fly-in — caught by
          * the fuel-crash pixel capture (qemu/capcrash). */
         g_car_row = 3;
-        i16 bb96 = (i16)GW(0xDD86);
+        i16 bb96 = (i16)Gw_horizon;
         if (bb96 < 0x2B)      g_rotor = 0x17;
         else if (bb96 < 0x62) g_rotor = 0x16;
         else { if (bb96 > 0x7D) { col = 4; g_car_row = 4; } g_rotor = 0x15; }
-    } else if (GW(0xF6AF) == 0x04) {              /* switch#2 case 0x113b0 (CRASH) */
+    } else if (Gw_game_mode == 0x04) {              /* switch#2 case 0x113b0 (CRASH) */
         g_rotor = 0;
     }
     g_car_col = col;
@@ -638,24 +654,24 @@ static void car_column_step(void)
  * PREVIOUS frame (a 1-frame delay). Hence player_hit_step() runs BEFORE entities_update_all(). */
 static void player_hit_step(void)
 {
-    if (GB(0xF6B1) != 0x00) {                              /* bF6B1 (d4c1) set */
-        if (GW(0xF6AF) != 0x04 && (i16)GW(0xDC68) >= 0) {  /* not crash + has lives */
-            if (GW(0xF6A9) == 0x00) {                      /* wF6A9 flash timer == 0 -> CRASH */
-                GB(0xDE6D) = 0x18;                         /* bc7d = 0x18 crash counter */
+    if (Gb_player_hit != 0x00) {                              /* bF6B1 (d4c1) set */
+        if (Gw_game_mode != 0x04 && (i16)Gw_lives >= 0) {  /* not crash + has lives */
+            if (Gw_flash_timer == 0x00) {                      /* wF6A9 flash timer == 0 -> CRASH */
+                Gb_crash_ctr = 0x18;                         /* bc7d = 0x18 crash counter */
                 s_lean_acc = 0;                            /* wFFFFFFEC = 0 (reko 0869 @161; the car-lean
                                                             * accumulator is RESET by the crash — without it
                                                             * a brake-built lean froze at speed 0 across the
                                                             * respawn: the wrong banked car after the stage-2
                                                             * fuel-out crash, unfiltered test 2 f3347+) */
                 s_lean_dir = 0;                            /* wFFFFFFF0 = 0 (reko 0869 @162) */
-                if (GB(0xF6B1) == 0x02 && (i16)GW(0xDC68) >= 0) GW(0xDC68) = 0;  /* hard hit -> lives 0 */
+                if (Gb_player_hit == 0x02 && (i16)Gw_lives >= 0) Gw_lives = 0;  /* hard hit -> lives 0 */
             } else {                                       /* already flashing: cockpit flash */
-                GW(0xF085) = 0x2E;                         /* ce95 */
-                GW(0xDE67) = (u16)((i16)GW(0xDD84) + 0xA0);  /* bc77 */
-                GW(0xDE6B) = (u16)((i16)GW(0xDD86) + 0x18);  /* bc7b */
+                Gw_cflash_spr = 0x2E;                         /* ce95 */
+                Gw_cflash_x = (u16)((i16)Gw_car_x + 0xA0);  /* bc77 */
+                Gw_cflash_y = (u16)((i16)Gw_horizon + 0x18);  /* bc7b */
             }
         }
-        GB(0xF6B1) = 0x00;                                  /* clear the hit flag */
+        Gb_player_hit = 0x00;                                  /* clear the hit flag */
     }
 }
 
@@ -670,18 +686,18 @@ int g_flash_f6a9;
 static void player_crash_step(void)
 {
     g_crash_phase = 0;
-    if (GB(0xDE6D) != 0x00) {
-        GW(0xF6AF) = 0x04;                                 /* d4bf game_mode = 4 (crash) */
-        GW(0xDC6C) = 0x00;                                 /* ba7c wDC6C = 0 */
-        g_crash_phase = GB(0xDE6D);                        /* for the fn1069_13c0 draw */
-        GB(0xDE6D) -= 1;                                   /* bc7d-- */
+    if (Gb_crash_ctr != 0x00) {
+        Gw_game_mode = 0x04;                                 /* d4bf game_mode = 4 (crash) */
+        Gw_fuel_window = 0x00;                                 /* ba7c wDC6C = 0 */
+        g_crash_phase = Gb_crash_ctr;                        /* for the fn1069_13c0 draw */
+        Gb_crash_ctr -= 1;                                   /* bc7d-- */
     }
     /* SNAPSHOT wF6A9 for the car draw: the original's flash gate reads d4b9 at
      * the car draw @1756, BEFORE the 20-frame block decrements it @1796 — the
      * port draws at the flip position (after the block), so on the dec-to-zero
      * frame it must use the PRE-dec value or the flash ends one odd frame early
      * (unfiltered test 2: orig flashed f3481, port stopped at f3479). */
-    g_flash_f6a9 = (i16)GW(0xF6A9);
+    g_flash_f6a9 = (i16)Gw_flash_timer;
 }
 
 /* ========================================================================== */
@@ -711,10 +727,10 @@ int run_level_frame(void)
          * score (27c9/27cb) and CLEAR anim_step DC6E. That forces game_main's
          * `if (bDC6E==0)` DEATH branch → the attract demo loops back to the MENU; it
          * does NOT advance to stage 2 (verified vs QEMU: DC6E=0 at the return @2041). */
-        GW(0xDC6C) = 0x00;                  /* ba7c invuln_timer = 0 */
-        if (GB(0xDC6F) != 0x00) {           /* bDC6F demo flag */
-            GW(0x27C9) = 0x00; GW(0x27CB) = 0x00;   /* score = 0 */
-            GB(0xDC6E) = 0x00;              /* anim_step = 0 → death branch */
+        Gw_fuel_window = 0x00;                  /* ba7c invuln_timer = 0 */
+        if (Gb_demo_flag != 0x00) {           /* bDC6F demo flag */
+            Gw_score_lo = 0x00; Gw_score_hi = 0x00;   /* score = 0 */
+            Gb_stage_clear = 0x00;              /* anim_step = 0 → death branch */
         }
         return 0;
     }
@@ -728,11 +744,11 @@ int run_level_frame(void)
     ff_poll_controls();          /* fn0A0D_0002: keystate -> control flags (0x24B7..) */
     if (s_tape) {
         demo_input_step();    /* external tape overrides (deterministic replay) */
-    } else if (GB(0xDC6F) != 0x00) {              /* attract DEMO */
-        if (GW(0x24B7) == 0x00 && GW(0x24B9) == 0x00)
+    } else if (Gb_demo_flag != 0x00) {              /* attract DEMO */
+        if (Gw_btn_fire == 0x00 && Gw_btn_start == 0x00)
             demo_input_step();                    /* fn0A0D_0251 RLE replay */
         else {                                    /* keypress aborts the demo */
-            GB(0xF6B3) = 0x01;                    /* bF6B3 (@145) */
+            Gb_demo_abort = 0x01;                    /* bF6B3 (@145) */
             s_local38 = 0;                        /* wFFFFFFCA = 0 -> end race loop */
         }
     }
@@ -752,7 +768,7 @@ int run_level_frame(void)
      * just wrote; the "no writer" claim was wrong — the writer is fn0869_15D6
      * itself). It re-ticks the wave VM fn0BA8_13FD with the gate
      * (wDC6C != 0 && bDC6E == 0), then projects every pool slot. */
-    if (GW(0xDC6C) != 0 && GB(0xDC6E) == 0) vm_step();   /* fn0BA8_13FD wave VM */
+    if (Gw_fuel_window != 0 && Gb_stage_clear == 0) vm_step();   /* fn0BA8_13FD wave VM */
     entities_update_all();    /* fn0DAE_0446 @1624: project + AI per pool slot (SETS bF6B1) */
 
     car_column_step();        /* 1069:0006 @619-653 (after fn0DAE_0446): banking col;
@@ -766,8 +782,8 @@ int run_level_frame(void)
      * msg 5 OUT-OF-FUEL (bDE50=5, bDE51=5). (Sound calls omitted.) */
     if (s_c0 == 0x14) {
         s_c0 = 0;
-        if (GW(0xF6A9) != 0) {
-            GW(0xF6A9) -= 1;
+        if (Gw_flash_timer != 0) {
+            Gw_flash_timer -= 1;
             /* ghidra @1796-1804: the damage-flash timer expiring on the
              * ENEMY-HIT colour (wF203==0x0D — set by the egg hit / ballistic
              * hit, reachable since the respawn-invuln fix): with the objective
@@ -775,30 +791,30 @@ int run_level_frame(void)
              * arm bF6DC — read only by the LEADER-SPOTTED branch's sfx queue
              * (FUN_1c3a_0643(4) @1898), so it is state-complete for the sound
              * port. (else-branch FUN_1c3a_05b7(4,0) = sound, omitted.) */
-            if (GW(0xF6A9) == 0 && GW(0xF203) == 0x0D) {
-                if (GW(0xF6C4) == 0 && GW(0xF6C6) == 0 && GB(0xF6DA) == 0)
-                    GB(0xF6DC) = 0x01;
+            if (Gw_flash_timer == 0 && Gw_flash_colour == 0x0D) {
+                if (Gw_objective_lo == 0 && Gw_objective_hi == 0 && Gb_obj_sfx_latch == 0)
+                    Gb_leader_sfx = 0x01;
             }
         }
-        if (GW(0xF6AF) == 0x01) {
-            if (GW(0xDC78) != 0) GW(0xDC78) -= 1;
-        } else if (GW(0xDC6C) == 0) {                  /* @1810: fuel out -> game-over tally */
-            if ((i16)GW(0xDC68) < 0 && s_local38 != 0) --s_local38;
+        if (Gw_game_mode == 0x01) {
+            if (Gw_kero != 0) Gw_kero -= 1;
+        } else if (Gw_fuel_window == 0) {                  /* @1810: fuel out -> game-over tally */
+            if ((i16)Gw_lives < 0 && s_local38 != 0) --s_local38;
         } else {
-            GW(0xDC6C) -= 1;
-            if (GW(0xDC6C) == 0) {
-                if (GW(0xF6A9) != 0) GW(0xF6A9) = 0;   /* + sfx, omitted */
-                GB(0xF6B1) = 0x01;
-                if (GB(0xDE50) != 0x05) {
-                    GB(0xDE52) = 0x01;
-                    GB(0xDE50) = 0x05;                 /* OUT OF FUEL */
-                    GB(0xDE51) = 0x05;
+            Gw_fuel_window -= 1;
+            if (Gw_fuel_window == 0) {
+                if (Gw_flash_timer != 0) Gw_flash_timer = 0;   /* + sfx, omitted */
+                Gb_player_hit = 0x01;
+                if (Gb_panel_msg != 0x05) {
+                    Gb_panel_state = 0x01;
+                    Gb_panel_msg = 0x05;                 /* OUT OF FUEL */
+                    Gb_panel_delay = 0x05;
                 }
             }
         }
         /* @1830: boss/level-complete tally — anim_step(bDC6E) set (e.g. by the
          * B-CITERN boss death) drives local_38 down each 20-frame tick. */
-        if (GB(0xDC6E) != 0 && s_local38 != 0) --s_local38;
+        if (Gb_stage_clear != 0 && s_local38 != 0) --s_local38;
     }
 
     /* @1834-1855: END-OF-LEVEL BONUS TALLY (per frame, outside the 20-frame gate).
@@ -817,18 +833,18 @@ int run_level_frame(void)
         /* (the bDC6E==0 branch draws the 0x36/0x37 overlay pair only when b40A5
          * is set — b40A5 has NO writer anywhere in the decompile and is 0 in the
          * blob, so that draw is dead code; nothing to port there.) */
-        if (GB(0xDC6E) != 0 && (GW(0x27D1) != 0 || GW(0x27D3) != 0)) {
-            u16 uVar6 = (u16)((GW(0x27D1) >> 1) | (((GW(0x27D3) & 1) != 0) << 15));
+        if (Gb_stage_clear != 0 && (Gw_bonus_lo != 0 || Gw_bonus_hi != 0)) {
+            u16 uVar6 = (u16)((Gw_bonus_lo >> 1) | (((Gw_bonus_hi & 1) != 0) << 15));
             if (uVar6 == 0) uVar6 = 1;
-            int borrow = (GW(0x27D1) < uVar6);
-            GW(0x27D1) = (u16)(GW(0x27D1) - uVar6);
-            GW(0x27D3) = (u16)(GW(0x27D3) - ((i16)uVar6 >> 15) - borrow);
-            int carry = ((u32)GW(0x27C9) + uVar6) > 0xFFFF;
-            GW(0x27C9) = (u16)(GW(0x27C9) + uVar6);
-            GW(0x27CB) = (u16)(GW(0x27CB) + ((i16)uVar6 >> 15) + carry);
+            int borrow = (Gw_bonus_lo < uVar6);
+            Gw_bonus_lo = (u16)(Gw_bonus_lo - uVar6);
+            Gw_bonus_hi = (u16)(Gw_bonus_hi - ((i16)uVar6 >> 15) - borrow);
+            int carry = ((u32)Gw_score_lo + uVar6) > 0xFFFF;
+            Gw_score_lo = (u16)(Gw_score_lo + uVar6);
+            Gw_score_hi = (u16)(Gw_score_hi + ((i16)uVar6 >> 15) + carry);
             s_local38 = 1;
         }
-        GW(0xF6A9) = 0;      /* fn1069_0006 @1854: flash timer held 0 during the tally */
+        Gw_flash_timer = 0;      /* fn1069_0006 @1854: flash timer held 0 during the tally */
     }
 
     /* 1069:0006 @879-897: the once-per-t24F1-tick block, gated on the timer
@@ -839,13 +855,13 @@ int run_level_frame(void)
      *     reference machine -> wF468 = 3); wF6B6 records the frame count.
      * (The tFFFFFFE8/wFFFFFFEA delay-loop @899-908 is a frame LIMITER for
      * too-fast machines — pure busy-wait, no game state, omitted.) */
-    if (GW(0x24F1) != s_prev_24f1) {
-        if (GB(0xDE51) != 0x00) GB(0xDE51) -= 1;
-        s_prev_24f1 = GW(0x24F1);
+    if (Gw_tick_timer != s_prev_24f1) {
+        if (Gb_panel_delay != 0x00) Gb_panel_delay -= 1;
+        s_prev_24f1 = Gw_tick_timer;
         i16 ax = (i16)((s_c2 - 12) >> 1);       /* (wFFFFFFC2 + ~0x0B) >> 1 */
-        GW(0xF468) = (u16)ax;
-        if (ax > 0x09) GW(0xF468) = 0x09;
-        GW(0xF6B6) = (u16)s_c2;
+        Gw_decor_density = (u16)ax;
+        if (ax > 0x09) Gw_decor_density = 0x09;
+        Gw_frames_per_tick = (u16)s_c2;
         s_c2 = 0;
     }
 
@@ -857,9 +873,9 @@ int run_level_frame(void)
     /* fn1069_0006 @1888-1891: the SPEED digits — drawn (persistent overlay) only
      * when the value CHANGES; local_36 is an uninitialized stack local, so the
      * first frame always draws. Runs right after the 1B27 call, before the flip. */
-    if (s_speed_prev != (i16)GW(0xE9CC)) {
-        s_speed_prev = (i16)GW(0xE9CC);
-        hud_number_draw(GW(0xE9CC), 2, 0x1C, 2);
+    if (s_speed_prev != (i16)Gw_speed) {
+        s_speed_prev = (i16)Gw_speed;
+        hud_number_draw(Gw_speed, 2, 0x1C, 2);
     }
 
     panel_objective_triggers(); /* 1069:0006 @921-958: idle-panel message switch (@921) */
@@ -876,14 +892,14 @@ int run_level_frame(void)
     /* score accumulation (fn1069_0006 @914), gated by tDC68>=0. Deferred to AFTER the
      * flip: the display above read the pre-add value (like the original @912 draw), and
      * the end-of-frame state is identical since the score changes exactly once/frame. */
-    if ((i16)GW(0xDC68) >= 0) {
-        u32 sc = ((u32)GW(0x27CB) << 16) | GW(0x27C9);
-        sc += (u32)((GW(0xE9CC) + 3) >> 2);
-        GW(0x27C9) = (u16)sc; GW(0x27CB) = (u16)(sc >> 16);
+    if ((i16)Gw_lives >= 0) {
+        u32 sc = ((u32)Gw_score_hi << 16) | Gw_score_lo;
+        sc += (u32)((Gw_speed + 3) >> 2);
+        Gw_score_lo = (u16)sc; Gw_score_hi = (u16)(sc >> 16);
     }
 
     /* 1069:0006 @982: blink parity toggles once per frame (after the flip). */
-    GW(0x24FF) ^= 0x01;
+    Gw_blink ^= 0x01;
 
     /* @983-984: ++wFFFFFFC0 (20-frame cycle) and ++wFFFFFFC2 (frames since the
      * last t24F1 tick); then the timer-ISR tick — the dec lands in this frame's
@@ -893,7 +909,7 @@ int run_level_frame(void)
     ++s_c2;
     if (++s_isr18 >= 0x12) {
         s_isr18 = 0;
-        GI(0x24F1) -= 1;                        /* dec word [24F1] — signed */
+        Gi_tick_timer -= 1;                        /* dec word [24F1] — signed */
     }
     return 1;                                    /* a race frame ran this call */
 }

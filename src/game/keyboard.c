@@ -40,10 +40,12 @@
  * (2) past-demo tape, (3) real/scripted keys via GC.input -> keystate -> flags.
  */
 #include "ff_game.h"
-#include "gmem.h"
+#include "gnames.h"
 
-/* key-state array base (fn114C_0012 zeroes 0x40 words here). */
-#define KEYSTATE 0x3FE3
+/* THE KEY-STATE ARRAY (de-DGROUP'd): was the 128-byte region @0x3FE3 that
+ * fn114C_0012 zeroes; now a standalone typed block g_keystate[scancode]
+ * (0xFF pressed / 0 released). Static storage = zeroed like the original. */
+u8 g_keystate[0x80];
 /* scancodes used by poll_controls (Set 1 make codes). */
 #define SC_ENTER 0x1C
 #define SC_SPACE 0x39
@@ -55,7 +57,7 @@
 /* set/clear one key-state byte (the INT9 ISR's per-key store: 0xFF / 0). */
 static void ks(int scancode, int down)
 {
-    GB(KEYSTATE + (scancode & 0x7F)) = down ? 0xFF : 0x00;
+    g_keystate[scancode & 0x7F] = down ? 0xFF : 0x00;
 }
 
 /* the "INT9 ISR": translate the platform's per-frame key snapshot (GC.input,
@@ -92,35 +94,35 @@ void ff_poll_controls(void)
      * and VRAM is untouched: a pure analog-output distortion with no
      * framebuffer content, outside the port's chunky present model (the b37A2
      * state toggle itself IS ported below). */
-    if (GB(0x3FF7) != 0x00 && GB(0x3FFA) != 0x00) {
-        if (GB(0xF6EB) == 0x00) GB(0x37A2) ^= 0x01;
-        GB(0xF6EB) = 0x01;
+    if (Gb_key_T != 0x00 && Gb_key_I != 0x00) {
+        if (Gb_pause_edge == 0x00) Gb_pause_vis ^= 0x01;
+        Gb_pause_edge = 0x01;
     } else {
-        GB(0xF6EB) = 0x00;
+        Gb_pause_edge = 0x00;
     }
 
     /* fn114C_01E2 joystick_read — hardware 0x201 read; skipped (no stick). The
      * mouse/joystick words below (24C3/24C5/24C7/24C9/24CB/24CD/24CF/24D1..) stay
      * 0 in the port, so each OR reduces to its keyboard key-state byte. */
-    GW(0x24C1) = (u16)GB(0x402E) | GW(0x24CD) | GW(0x24D9);              /* LEFT arrow  */
-    GW(0x24BF) = (u16)GB(0x4030) | GW(0x24CB) | GW(0x24D7);              /* RIGHT arrow */
-    GW(0x24BB) = (u16)GB(0x402B) | GW(0x24C7) | GW(0x24D3);             /* UP  (accel) */
-    GW(0x24BD) = (u16)GB(0x4033) | GW(0x24C9) | GW(0x24D5) | (u16)GB(0x402F); /* DOWN (brake) */
-    GW(0x24B7) = (u16)GB(0x401C) | GW(0x24C3) | GW(0x24CF)
-               | (u16)GB(0x402A) | (u16)GB(0x402C);                     /* SPACE|kp7|kp9 fire */
-    GW(0x24B9) = (u16)GB(0x3FFF) | GW(0x24C5) | GW(0x24D1) | (u16)GB(0x402C); /* ENTER|kp9 aux */
+    Gw_btn_left = (u16)Gb_key_left | Gw_mouse_left | Gw_joy_left;              /* LEFT arrow  */
+    Gw_btn_right = (u16)Gb_key_right | Gw_mouse_right | Gw_joy_right;              /* RIGHT arrow */
+    Gw_btn_accel = (u16)Gb_key_up | Gw_mouse_up | Gw_joy_up;             /* UP  (accel) */
+    Gw_btn_brake = (u16)Gb_key_down | Gw_mouse_down | Gw_joy_down | (u16)Gb_key_kp5; /* DOWN (brake) */
+    Gw_btn_fire = (u16)Gb_key_space | Gw_mouse_fire | Gw_mouse_fire_b
+               | (u16)Gb_key_kp7 | (u16)Gb_key_kp9;                     /* SPACE|kp7|kp9 fire */
+    Gw_btn_start = (u16)Gb_key_enter | Gw_mouse_start | Gw_mouse_start_b | (u16)Gb_key_kp9; /* ENTER|kp9 aux */
 
     /* the w24E3 (joystick present) block of fn0A0D_0002 is skipped: w24E3 == 0. */
 
     /* missile / take-off from the fire+aux chord (fn0A0D_0002 @87-104). */
-    GW(0xF6B4) = 0x00;                           /* wF6B4 missile */
-    GW(0xF6C2) = 0x00;                           /* wF6C2 take-off */
-    if (GW(0x24B9) != 0x00) {                    /* aux/start held */
-        if (GB(0xF6EA) == 0x00) {                /* rising edge of aux (tF6EA) */
-            if (GW(0x24B7) != 0x00) GW(0xF6B4) = 0x01;   /* fire+aux -> MISSILE */
-            else { GW(0x24E9) = 0x00; GW(0xF6C2) = 0x01; }  /* aux alone -> take-off */
+    Gw_btn_missile = 0x00;                           /* wF6B4 missile */
+    Gw_btn_takeoff = 0x00;                           /* wF6C2 take-off */
+    if (Gw_btn_start != 0x00) {                    /* aux/start held */
+        if (Gb_aux_edge == 0x00) {                /* rising edge of aux (tF6EA) */
+            if (Gw_btn_fire != 0x00) Gw_btn_missile = 0x01;   /* fire+aux -> MISSILE */
+            else { Gw_w24E9 = 0x00; Gw_btn_takeoff = 0x01; }  /* aux alone -> take-off */
         }
-        GW(0x24B7) = 0x00;                        /* aux consumes the fire flag */
+        Gw_btn_fire = 0x00;                        /* aux consumes the fire flag */
     }
-    GB(0xF6EA) = (u8)GW(0x24B9);                  /* tF6EA = aux edge latch */
+    Gb_aux_edge = (u8)Gw_btn_start;                  /* tF6EA = aux edge latch */
 }

@@ -15,7 +15,8 @@
  * plus the playfield origin PF_Y=48.
  */
 #include "ff_game.h"
-#include "gmem.h"
+#include "gnames.h"
+#include "data/gamedata.h"   /* ffd_morph_dir / ffd_turret_frames */
 #include <string.h>
 
 #define PF_Y 48
@@ -132,27 +133,25 @@ void dl_flush(void)
 }
 
 /* ---- fn0A0D_0C8F: patch morph-script thresholds with BOB heights -------- *
- * Morph-script directory = far pointers @0x1460 (stride 4: off,seg), terminated
- * by a null entry. Each script is a list of [t0000=threshold, t0002=spriteIdx]
- * 4-byte entries, ending when t0002 < 0. The patch sets t0000 = height of the
- * BOB sprite t0002 (fn0A0D_0B97 = aDEEE[t0002]->wFFFC), so the morph walk later
- * selects the largest sprite that fits the distance-scaled size. */
+ * Morph-script directory = ffd_morph_dir (was the far-ptr table @0x1460),
+ * terminated by a null entry. Each script is a list of MorphEnt {threshold,
+ * spriteIdx} entries in the MUTABLE g_morph bank, ending when sprite < 0.
+ * The patch sets thresh = height of the sprite (fn0A0D_0B97), so the morph
+ * walk later selects the largest sprite that fits the distance-scaled size. */
 void morph_patch(void)
 {
     if (!GC.bob) return;
-    for (int s = 0; ; ++s) {
-        u16 off = GW(0x1460 + s * 4);
-        u16 seg = GW(0x1462 + s * 4);
+    for (int s = 0; s < 12; ++s) {              /* dir = 12 entries @0x1460 */
+        u16 off = ffd_morph_dir[s].off;
+        u16 seg = ffd_morph_dir[s].seg;
         if ((off | seg) == 0) break;            /* null terminator */
-        if (s > 64) break;                      /* safety */
-        u16 p = off;
+        MorphEnt *m = morph_at(off);
         for (int k = 0; k < 13; ++k) {          /* up to 13 entries/script */
-            i16 spr = GI(p + 2);                 /* t0002 */
+            i16 spr = m[k].sprite;               /* t0002 */
             if (spr < 0) break;                  /* end marker */
             int w = 0, h = 0;
-            ff_dir_dims((int)spr, &w, &h);       /* fn0A0D_0B97: aDEEE[spr] height */
-            GI(p) = (i16)h;                      /* t0000 = sprite height */
-            p += 4;
+            ff_dir_dims((int)spr, &w, &h);       /* fn0A0D_0B97: dir[spr] height */
+            m[k].thresh = (i16)h;                /* t0000 = sprite height */
         }
     }
     /* fn0A0D_0C8F tail: `ds->w1390 <<= 1` — the missile script (@0x1390, script 4)
@@ -162,17 +161,18 @@ void morph_patch(void)
      * (the missile is drawn twice as large as a plain height-scaled sprite would be).
      * Proven from the decompiled fn0A0D_0C8F; without it the missile picks a mip that
      * is one step too small. */
-    GI(0x1390) = (i16)(GI(0x1390) << 1);
+    Gi_missile_thresh0 = (i16)(Gi_missile_thresh0 << 1);
 
-    /* fn0A0D_0C8F final tails (ghidra @3008-3013): build the 300-byte table at
-     * DGROUP 0xEF57 — bytes [0..0xB3] = i/18 (0..9), then [0x8C..0x12B] = 9
-     * (the second loop overwrites the 0x8C..0xB3 overlap; "@0xEFE3" is just
-     * 0xEF57+0x8C, the same table). A distance→level ramp (di/18 capped at 9),
-     * but it has NO READER anywhere in either decompile (searched by name,
-     * by the -0x10a9 encoding and by the 0xEF57 constant) — written-only init
-     * data. Ported for byte-exact DGROUP fidelity. */
-    for (int i = 0; i < 0xB4; ++i) GB(0xEF57 + i) = (u8)(i / 0x12);
-    for (int i = 0x8C; i < 300; ++i) GB(0xEF57 + i) = 0x09;
+    /* fn0A0D_0C8F final tails (ghidra @3008-3013): build the 300-byte table
+     * (was @0xEF57) — bytes [0..0xB3] = i/18 (0..9), then [0x8C..0x12B] = 9.
+     * A distance→level ramp with NO READER anywhere in either decompile
+     * (written-only init data); kept as a local block for fidelity. */
+    {
+        static u8 s_ef57[300];
+        for (int i = 0; i < 0xB4; ++i) s_ef57[i] = (u8)(i / 0x12);
+        for (int i = 0x8C; i < 300; ++i) s_ef57[i] = 0x09;
+        (void)s_ef57;
+    }
 }
 
 /* ---- fn0869_1726 + fn0A0D_053E (main sprite) for one pool slot ----------- */
@@ -181,14 +181,17 @@ static void render_entity(u8 *e, int slot)
     i16 di = *(i16 *)(e + 3);                    /* t0003 = on-screen distance */
     if (!(di >= 0 && di < 0x100)) return;        /* fn0869_1726 guard */
 
-    u16 ax_24 = (u16)(GB(0xE4CC + di) >> 1);     /* perspective scale */
-    u16 anim  = *(u16 *)(e + 0x1D);              /* ptr001D offset (DGROUP) */
+    u16 ax_24 = (u16)(g_persp_scale[di] >> 1);   /* perspective scale (E4CC) */
+    u16 anim  = *(u16 *)(e + 0x1D);              /* ptr001D — the morph KEY (the
+                                                  * original script offset, from
+                                                  * the as-is prototype data) */
+    MorphEnt *m = morph_at(anim);                /* -> the mutable g_morph bank */
     /* explosions share the morph threshold 0x135C, which the original writes
      * per-slot in the interleaved AI+projection loop. Restore THIS slot's
      * snapshot (captured after its AI in entities_update_all) so different-parity
      * bursts pick their own mip, instead of all seeing the last explosion's value. */
-    if (anim == 0x135C) GI(0x135C) = (i16)g_slot_thresh[slot];
-    i16 base0 = GI(anim);                        /* ptr001D->t0000 (1st thresh) */
+    if (anim == 0x135C) m[0].thresh = (i16)g_slot_thresh[slot];
+    i16 base0 = m[0].thresh;                     /* ptr001D->t0000 (1st thresh) */
     /* fn0869_1726 does `mul si` (16-bit UNSIGNED multiply, keep the LOW 16 bits)
      * then `sar ax,cl` (ARITHMETIC shift of that i16) — proven by ndisasm of the
      * EXE @0869:1726 (F7E6 mul si; D3F8 sar ax,cl). So the product must be
@@ -206,10 +209,12 @@ static void render_entity(u8 *e, int slot)
     /* fn0A0D_053E morph walk: advance while t0019 < threshold, then take t0002.
      * If the slot's w001B (the runtime-shape base recorded into the prototype
      * by the path VM) is nonzero, the sprite index is t0002 + w001B. */
-    u16 p = anim;
-    for (int k = 0; k < 13 && t0019 < GI(p); ++k) p += 4;
-    i16 si = GI(p + 2);                          /* t0002 sprite index */
-    if (si < 0) si = GI(p - 2);                  /* tFFFE = prev entry's sprite */
+    int mk = 0;
+    while (mk < 13 && t0019 < m[mk].thresh) ++mk;
+    i16 si = m[mk].sprite;                       /* t0002 sprite index */
+    if (si < 0) si = m[mk - 1].sprite;           /* tFFFE = prev entry's sprite
+                                                  * (mk==0 can't hit this: the
+                                                  * end marker is never first) */
     u16 base1B = *(u16 *)(e + 0x1B);             /* w001B runtime base */
     if (base1B != 0) si = (i16)(si + base1B);
 
@@ -238,7 +243,7 @@ static void render_entity(u8 *e, int slot)
          * the SAME key di as the main sprite (enqueued right after it). Being a
          * normal sorted entry it is COVERED by later-drawn equal/nearer sprites
          * (an immediate pre-sprite fill hid it completely — f201/f217). */
-        int iVar6 = ((int)(u8)GB(0xF087 + si) >> 2) + 1;
+        int iVar6 = ((int)g_sprw[si] >> 2) + 1;
         dl_add_box((i16)(w0009 - iVar6), w000D,
                    (i16)(w0009 + iVar6), (i16)(w000D - (iVar6 >> 3)), 0x0B, di);
     } else if (e[0x2E] >= 2 && e[0x2E] <= 6) {
@@ -250,11 +255,11 @@ static void render_entity(u8 *e, int slot)
          * base {2,3:0x18, 4:0x1b, 5:0x22, 6:0x27} stepping -10 while > 0x17. */
         static const i16 lamp_base[7] = { 0, 0, 0x18, 0x18, 0x1B, 0x22, 0x27 };
         if (e[0x2E] == 3) {                       /* case 0x6AB: + the TURRET */
-            u8 t = GB(0x3815 + *(u16 *)(e + 0x21));   /* frame @0x3815[phase] */
+            u8 t = ffd_turret_frames[*(u16 *)(e + 0x21)];   /* frame (was @0x3815[phase]) */
             if (t != 0)
                 dl_add(w0009, (i16)(w000D - 13), (int)t, (i16)(di - 1));
         }
-        i16 par = (GW(0x24FF) != 0) ? 1 : -1;     /* blink parity (24FF)      */
+        i16 par = (Gw_blink != 0) ? 1 : -1;     /* blink parity (24FF)      */
         for (i16 v = lamp_base[e[0x2E]]; v > 0x17; v = (i16)(v - 10)) {
             dl_add((i16)(w0009 + v), (i16)(w000D - 5 - par), 57, (i16)(di - 1));
             dl_add((i16)(w0009 - v), (i16)(w000D - 5 + par), 57, (i16)(di - 1));
@@ -274,7 +279,7 @@ void render_entities(void)
      * décor sprite and an earlier pool slot ON TOP of a later one. (Décor
      * enqueued first + a stable sort happened to match the décor/entity case
      * but reversed the entity/entity ties — the f2020-2040 flame residual.) */
-    u8 *pool = (u8 *)&G + 0xE5CC;
+    u8 *pool = ENT_BASE;
     for (int i = 0; i < 20; ++i) {
         u8 *e = pool + i * 0x33;
         if ((i8)e[0] < 0) continue;             /* free slot */

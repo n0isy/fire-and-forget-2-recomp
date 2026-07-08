@@ -29,7 +29,8 @@
  * write-watchpoint) and the STAGE COMPLETED banner (@5185, hud_stage_banner).
  */
 #include "ff_game.h"
-#include "gmem.h"
+#include "gnames.h"
+#include "data/gamedata.h"   /* ffd_txt_bonus/stage/completed named strings */
 #include "../render/ff_font.h"
 #include <string.h>
 
@@ -46,10 +47,13 @@ static u8  g_hud[FF_W * FF_H];
  * extra orb/fuel-fill step and the whole startup animation drifts ~2 frames ahead. */
 static int s_hud_first;
 
-/* draw one glyph (char code at DGROUP offset `off`) into the overlay */
+/* draw one gauge glyph into the overlay. `off` keeps the ORIGINAL glyph-table
+ * offset convention (base 0x38B1) — the char codes come from the named
+ * ffd_hud_glyph_tables data, no longer from G. */
 static void hud_glyph(u16 off, int x, int y, int color)
 {
-    ff_font_draw_buf(g_hud, (const char *)GPTR(off), 1, x, y, color);
+    ff_font_draw_buf(g_hud, (const char *)&ffd_hud_glyph_tables[off - 0x38B1],
+                     1, x, y, color);
 }
 
 /* fn10EF_04C7 (@10EF:04C7): draw ONE 8-px-wide, 1-row gauge-bar segment at
@@ -88,19 +92,19 @@ static void hud_bar_seg(int x, int y, int frame)
 void hud_cockpit_reset(void)
 {
     memset(g_hud, 0xFF, sizeof g_hud);      /* transparent everywhere */
-    GB(0xF6B2) = 0x00;                       /* bF6B2 */
-    GB(0xF7ED) = 0x00;                       /* bF7ED aim current = 0 */
-    GW(0x38AF) = 0x00;                       /* w38AF fuel level = 0 */
-    GW(0x38AD) = 0x00;                       /* w38AD icon anim = 0 */
-    GW(0x38AB) = 0x00;                       /* w38AB icon anim = 0 */
-    GW(0xF7E7) = 0xFFFF;                      /* wF7E7 */
-    GW(0xF7E5) = 0xFFFF;                      /* wF7E5 */
-    GW(0xF7E3) = 0xFFFF;                      /* wF7E3 high-score cache */
-    GW(0xF7E1) = 0xFFFF;                      /* tF7E1 */
-    GW(0xF7EB) = 0x00;                        /* wF7EB */
-    GW(0xF7E9) = 0x00;                        /* tF7E9 */
-    GB(0xF7EE) = (u8)(GW(0x27C7) + 49);       /* bF7EE = t27C7 + 49 */
-    GB(0xF7EF) = 0x00;                        /* bF7EF */
+    Gb_bonus_banner = 0x00;                       /* bF6B2 */
+    Gb_orbs_shown = 0x00;                       /* bF7ED aim current = 0 */
+    Gw_fuel_shown = 0x00;                       /* w38AF fuel level = 0 */
+    Gw_kbar_shown = 0x00;                       /* w38AD icon anim = 0 */
+    Gw_fbar_shown = 0x00;                       /* w38AB icon anim = 0 */
+    Gw_wF7E7 = 0xFFFF;                      /* wF7E7 */
+    Gw_wF7E5 = 0xFFFF;                      /* wF7E5 */
+    Gw_high_cache_hi = 0xFFFF;                      /* wF7E3 high-score cache */
+    Gw_high_cache_lo = 0xFFFF;                      /* tF7E1 */
+    Gw_bonus_cache_hi = 0x00;                        /* wF7EB */
+    Gw_bonus_cache_lo = 0x00;                        /* tF7E9 */
+    Gb_stage_digit = (u8)(Gw_stage + 49);       /* bF7EE = t27C7 + 49 */
+    Gb_bF7EF = 0x00;                        /* bF7EF */
     s_hud_first = 1;                          /* wArg04!=0: first step is init-only */
 }
 
@@ -140,10 +144,10 @@ void hud_cockpit_step(void)
      * So EVEN race frames show the score drawn one frame earlier — every
      * historical pixel sample (capext every-10th ⇔ ODD original frames)
      * missed this; the unfiltered per-frame test exposed it immediately. */
-    if (GW(0x24FF) == 0x00) {
-        if (GW(0xF7EB) == GW(0x27D3) && GW(0xF7E9) == GW(0x27D1)) {
-            if (GB(0xF6B2) != 0x00) {                  /* d4c2: big BONUS banner */
-                GB(0xF6B2) -= 1;
+    if (Gw_blink == 0x00) {
+        if (Gw_bonus_cache_hi == Gw_bonus_hi && Gw_bonus_cache_lo == Gw_bonus_lo) {
+            if (Gb_bonus_banner != 0x00) {                  /* d4c2: big BONUS banner */
+                Gb_bonus_banner -= 1;
                 s_bonus_banner = 1;   /* drawn in hud_stage_banner (render phase):
                                        * the original paints it OVER the already-
                                        * drawn playfield of THIS frame's page, so
@@ -151,59 +155,59 @@ void hud_cockpit_step(void)
                                        * draw it after render_world's repaint */
             }
         } else {
-            GW(0xF7EB) = GW(0x27D3); GW(0xF7E9) = GW(0x27D1);
-            hud_number_draw(((u32)GW(0x27D3) << 16) | GW(0x27D1), 3, 0x1C, 4);
+            Gw_bonus_cache_hi = Gw_bonus_hi; Gw_bonus_cache_lo = Gw_bonus_lo;
+            hud_number_draw(((u32)Gw_bonus_hi << 16) | Gw_bonus_lo, 3, 0x1C, 4);
         }
-        if (GW(0xF7E3) != GW(0x27CF) || GW(0xF7E1) != GW(0x27CD)) {
-            hud_number_draw(((u32)GW(0x27CF) << 16) | GW(0x27CD), 7, 1, 2);
-            GW(0xF7E3) = GW(0x27CF); GW(0xF7E1) = GW(0x27CD);
+        if (Gw_high_cache_hi != Gw_high_hi || Gw_high_cache_lo != Gw_high_lo) {
+            hud_number_draw(((u32)Gw_high_hi << 16) | Gw_high_lo, 7, 1, 2);
+            Gw_high_cache_hi = Gw_high_hi; Gw_high_cache_lo = Gw_high_lo;
         }
     } else {
-        hud_number_draw(((u32)GW(0x27CB) << 16) | GW(0x27C9), 7, 1, 4);
+        hud_number_draw(((u32)Gw_score_hi << 16) | Gw_score_lo, 7, 1, 4);
     }
 
-    if (GB(0xF6D3) == 0x00) {                          /* weapon/ammo icon anim */
-        if (GW(0x24FF) != 0x00) {                      /* blink parity */
-            int ax_367 = (i8)GB(0xF462);               /* bF462 (signed) */
+    if (Gb_hud_phase == 0x00) {                          /* weapon/ammo icon anim */
+        if (Gw_blink != 0x00) {                      /* blink parity */
+            int ax_367 = (i8)Gb_weapon_anim;               /* bF462 (signed) */
             if (ax_367 != 0) {
-                int next = (i8)GB(0xF462) + 1;
-                if (GB(0x38B4 + ax_367) == 0x00) {     /* table terminator */
-                    GB(0xF6D3) = 0x01;
+                int next = (i8)Gb_weapon_anim + 1;
+                if (ffd_hud_glyph_tables[0x38B4 - 0x38B1 + ax_367] == 0x00) {  /* table terminator */
+                    Gb_hud_phase = 0x01;
                     next = 0x00;
                 }
-                GB(0xF462) = (u8)next;
+                Gb_weapon_anim = (u8)next;
                 hud_glyph((u16)(0x38B1 + ax_367), 0x108, 0x10, 0x01);
                 hud_glyph((u16)(0x38B2 + ax_367), 0x108, 0x18, 0x01);
                 hud_glyph((u16)(0x38B3 + ax_367), 0x108, 0x20, 0x01);
             }
         }
-    } else if ((i16)(i8)GB(0xF7ED) < (i16)GW(0xDC68)) {  /* fewer orbs shown than lives: add one */
-        GB(0xF7ED) = (u8)((i8)GB(0xF7ED) + 1);
+    } else if ((i16)(i8)Gb_orbs_shown < (i16)Gw_lives) {  /* fewer orbs shown than lives: add one */
+        Gb_orbs_shown = (u8)((i8)Gb_orbs_shown + 1);
         /* FILLED lives-orb glyph, char code @0x38D5 (`&w38AF + 19` words); x =
          * (bF7ED<<3)+0x110 -> the 4 orbs land at x=0x118/0x120/0x128/0x130, y=0x20. */
-        hud_glyph(0x38D5, ((i16)(i8)GB(0xF7ED) << 3) + 0x110, 0x20, 0x01);
-    } else if ((i16)(i8)GB(0xF7ED) > (i16)GW(0xDC68)) {  /* more orbs shown than lives: erase one */
-        if ((i16)GW(0xDC68) >= 0)                        /* ERASE glyph, char code @0x38D6 */
-            hud_glyph(0x38D6, ((i16)(i8)GB(0xF7ED) << 3) + 0x110, 0x20, 0x01);
-        GB(0xF7ED) = (u8)((i8)GB(0xF7ED) - 1);
+        hud_glyph(0x38D5, ((i16)(i8)Gb_orbs_shown << 3) + 0x110, 0x20, 0x01);
+    } else if ((i16)(i8)Gb_orbs_shown > (i16)Gw_lives) {  /* more orbs shown than lives: erase one */
+        if ((i16)Gw_lives >= 0)                        /* ERASE glyph, char code @0x38D6 */
+            hud_glyph(0x38D6, ((i16)(i8)Gb_orbs_shown << 3) + 0x110, 0x20, 0x01);
+        Gb_orbs_shown = (u8)((i8)Gb_orbs_shown - 1);
     } else {                                            /* orbs == lives: fuel gauge */
-        i16 ax_158 = (i16)GW(0x38AF);
-        if (ax_158 >= (i16)GW(0xE9C8)) {
-            if ((i16)GW(0x38AF) > (i16)GW(0xE9C8)) {
-                GW(0x38AF) = (u16)((i16)GW(0x38AF) - 1);
-                i16 fuel = (i16)GW(0x38AF), wLoc, si;
+        i16 ax_158 = (i16)Gw_fuel_shown;
+        if (ax_158 >= (i16)Gw_missile_fuel) {
+            if ((i16)Gw_fuel_shown > (i16)Gw_missile_fuel) {
+                Gw_fuel_shown = (u16)((i16)Gw_fuel_shown - 1);
+                i16 fuel = (i16)Gw_fuel_shown, wLoc, si;
                 if (fuel > 11)      { wLoc = fuel - 12; si = 0x10; }
                 else if (fuel > 5)  { wLoc = fuel - 6;  si = 0x18; }
                 else                { wLoc = fuel;      si = 0x20; }
                 hud_glyph((u16)(0x38CE + wLoc), 0x110, si, 0x01);
-                GB(0xF462) = (fuel == 0) ? 22 : 0x0D;
-                GB(0xF6D3) = 0x00;
+                Gb_weapon_anim = (fuel == 0) ? 22 : 0x0D;
+                Gb_hud_phase = 0x00;
             }
         } else {
-            GB(0xF462) = (ax_158 == 0) ? 0x01 : 0x07;
-            GB(0xF6D3) = 0x00;
-            GW(0x38AF) = (u16)((i16)GW(0x38AF) + 1);
-            i16 fuel = (i16)GW(0x38AF), wLoc, si;
+            Gb_weapon_anim = (ax_158 == 0) ? 0x01 : 0x07;
+            Gb_hud_phase = 0x00;
+            Gw_fuel_shown = (u16)((i16)Gw_fuel_shown + 1);
+            i16 fuel = (i16)Gw_fuel_shown, wLoc, si;
             if (fuel > 0x0C)      { wLoc = fuel - 12; si = 0x10; }
             else if (fuel > 0x06) { wLoc = fuel - 6;  si = 0x18; }
             else                  { wLoc = fuel;      si = 0x20; }
@@ -216,23 +220,23 @@ void hud_cockpit_step(void)
      * w24FF==0 -> RIGHT "K" bar @x=0xC8 ramps `w38AD`->`wDC78`. Each draws ONE
      * 8x1 segment row/frame at y=0x27-level: fill sprite when growing (F=frame45,
      * K=frame44), erase sprite (frame43) when shrinking. Persistent overlay. */
-    if (GW(0x24FF) != 0x00) {                             /* F bar, x=0x50 */
-        i16 tgt = (i16)((i16)GW(0xDC6C) >> 1);
-        if ((i16)GW(0x38AB) > tgt) {
-            hud_bar_seg(0x50, 0x27 - (i16)GW(0x38AB), 43);   /* ptrDF9A erase */
-            GW(0x38AB) = (u16)((i16)GW(0x38AB) - 1);
-        } else if ((i16)GW(0x38AB) < tgt) {
-            GW(0x38AB) = (u16)((i16)GW(0x38AB) + 1);
-            hud_bar_seg(0x50, 0x27 - (i16)GW(0x38AB), 45);   /* ptrDFA2 F fill */
+    if (Gw_blink != 0x00) {                             /* F bar, x=0x50 */
+        i16 tgt = (i16)((i16)Gw_fuel_window >> 1);
+        if ((i16)Gw_fbar_shown > tgt) {
+            hud_bar_seg(0x50, 0x27 - (i16)Gw_fbar_shown, 43);   /* ptrDF9A erase */
+            Gw_fbar_shown = (u16)((i16)Gw_fbar_shown - 1);
+        } else if ((i16)Gw_fbar_shown < tgt) {
+            Gw_fbar_shown = (u16)((i16)Gw_fbar_shown + 1);
+            hud_bar_seg(0x50, 0x27 - (i16)Gw_fbar_shown, 45);   /* ptrDFA2 F fill */
         }
     } else {                                              /* K bar, x=0xC8 */
-        i16 tgt = (i16)GW(0xDC78);
-        if ((i16)GW(0x38AD) > tgt) {
-            hud_bar_seg(0xC8, 0x27 - (i16)GW(0x38AD), 43);   /* ptrDF9A erase */
-            GW(0x38AD) = (u16)((i16)GW(0x38AD) - 1);
-        } else if ((i16)GW(0x38AD) < tgt) {
-            GW(0x38AD) = (u16)((i16)GW(0x38AD) + 1);
-            hud_bar_seg(0xC8, 0x27 - (i16)GW(0x38AD), 44);   /* ptrDF9E K fill */
+        i16 tgt = (i16)Gw_kero;
+        if ((i16)Gw_kbar_shown > tgt) {
+            hud_bar_seg(0xC8, 0x27 - (i16)Gw_kbar_shown, 43);   /* ptrDF9A erase */
+            Gw_kbar_shown = (u16)((i16)Gw_kbar_shown - 1);
+        } else if ((i16)Gw_kbar_shown < tgt) {
+            Gw_kbar_shown = (u16)((i16)Gw_kbar_shown + 1);
+            hud_bar_seg(0xC8, 0x27 - (i16)Gw_kbar_shown, 44);   /* ptrDF9E K fill */
         }
     }
 }
@@ -271,10 +275,10 @@ void hud_stage_banner(void)
      * the parity-0 pages only — visible every other frame in the original. */
     if (s_bonus_banner) {
         s_bonus_banner = 0;
-        hud_text_row((const char *)GPTR(0x3910), 0x80, 0x1E);
+        hud_text_row((const char *)ffd_txt_bonus, 0x80, 0x1E);
     }
-    if (GB(0xDC6E) == 0) return;
-    hud_text_row((const char *)GPTR(0x3916), 0x80, 0x1E);   /* STAGE        */
-    hud_text_row((const char *)GPTR(0xF7EE), 0xA0, 0x2E);   /* stage number */
-    hud_text_row((const char *)GPTR(0x391C), 0x60, 0x3E);   /* COMPLETED    */
+    if (Gb_stage_clear == 0) return;
+    hud_text_row((const char *)ffd_txt_stage, 0x80, 0x1E);   /* STAGE        */
+    hud_text_row((const char *)Gp_stage_digit, 0xA0, 0x2E);   /* stage number */
+    hud_text_row((const char *)ffd_txt_completed, 0x60, 0x3E);   /* COMPLETED    */
 }

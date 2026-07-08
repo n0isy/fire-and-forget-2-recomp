@@ -40,7 +40,8 @@
  * parsed into GC.gen; aDEEE[idx] = {.off = frame, .seg = 3} (bank id 3).
  */
 #include "ff_game.h"
-#include "gmem.h"
+#include "gnames.h"
+#include "data/gamedata.h"   /* ffd_shapegen_pairs / ffd_decimation_programs */
 #include <stdlib.h>
 #include <string.h>
 
@@ -187,10 +188,10 @@ void shape_gen_build(void)
     int n = 0;
     long data_bytes = 0;
     for (int i = 0; i < GEN_MAX; ++i) {
-        i16 src = GI(0x2613 + i * 4);
+        i16 src = ffd_shapegen_pairs[i].src;
         if (src < 0) break;                    /* list terminator */
-        i16 t = GI(0x2613 + i * 4 + 2);
-        const u8 *prog = GPTR(0x2521 + t * 0x16);
+        i16 t = ffd_shapegen_pairs[i].xform;
+        const u8 *prog = ffd_decimation_programs[t];
         if (shape_build(&gs[n], (int)src, prog) != 0) break;
         data_bytes += 4 + (long)(gs[n].w >> 1) * gs[n].h;
         ++n;
@@ -230,14 +231,14 @@ void shape_gen_build(void)
 
     /* register at aDEEE[tEF52 .. tEF52+n), store real widths, bump tEF52 —
      * then tDE69 = tEF52 exactly as main (083C:104) saves it after 133B. */
-    int base = (int)GW(0xEF52);
+    int base = (int)Gw_spr_count;
     for (int i = 0; i < n; ++i) {
         int idx = base + i;
-        if ((u32)(0xDEEE + idx * 4) + 4 > sizeof(struct Globals)) break;
-        GW(0xDEEE + idx * 4) = (u16)i;         /* aDEEE[idx].off = gen frame i */
-        GW(0xDEF0 + idx * 4) = 0x0003;         /* aDEEE[idx].seg = bank 2 (+1) */
-        GB(0xF087 + idx)     = (u8)(gs[i].real_w & 0xFF);   /* aF087 real W */
+        if (idx >= SPRDIR_MAX) break;
+        g_sprdir[idx].off = (u16)i;            /* aDEEE[idx].off = gen frame i */
+        g_sprdir[idx].seg = 0x0003;            /* aDEEE[idx].seg = bank 2 (+1) */
+        g_sprw[idx]       = (u8)(gs[i].real_w & 0xFF);      /* aF087 real W */
     }
-    GW(0xEF52) = (u16)(base + n);              /* tEF52 = 300 */
-    GW(0xDE69) = GW(0xEF52);                   /* main: tDE69 = tEF52 */
+    Gw_spr_count = (u16)(base + n);              /* tEF52 = 300 */
+    Gw_spr_count_saved = Gw_spr_count;                   /* main: tDE69 = tEF52 */
 }

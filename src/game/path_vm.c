@@ -41,7 +41,9 @@
  * range gets re-registered, which the port reproduces via tEF52).
  */
 #include "ff_game.h"
-#include "gmem.h"
+#include "gnames.h"
+#include "data/gamedata.h"   /* ffd_composer_dir / ffd_shape_streams /
+                              * ffd_decimation_programs / ffd_spawn_offsets */
 #include <stdlib.h>
 #include <string.h>
 
@@ -111,15 +113,15 @@ int rt_shape_sample(int slot, int x, int y)
  * Returns the rt slot (== the aDEEE index; the "current dest" the blits target). */
 static int rt_new_shape(int W, int H)
 {
-    int idx = (int)GW(0xEF52);
+    int idx = (int)Gw_spr_count;
     int slot = rt_bind(idx, W, H);              /* slot == idx */
     if (slot < 0) return -1;
-    if ((u32)(0xDEEE + idx * 4) + 4 <= sizeof(struct Globals)) {
-        GW(0xDEEE + idx * 4) = (u16)slot;
-        GW(0xDEF0 + idx * 4) = 0x0004;
-        GB(0xF087 + idx)     = (u8)(W & 0xFF);
+    if (idx < SPRDIR_MAX) {
+        g_sprdir[idx].off = (u16)slot;
+        g_sprdir[idx].seg = 0x0004;
+        g_sprw[idx]       = (u8)(W & 0xFF);
     }
-    GW(0xEF52) = (u16)(idx + 1);
+    Gw_spr_count = (u16)(idx + 1);
     return slot;
 }
 
@@ -259,7 +261,7 @@ static int scaler_tick(int reset)
         sc.pp = sc.prog;
         sc.phase = 2;
         if (sc.dw_real == 0) { sc.phase = 0; return 0; }   /* original hangs; guard */
-        sc.budget = (i16)GW(0x2505) / sc.dw_real;          /* d553 = w2505/destW */
+        sc.budget = (i16)Gw_scale_budget / sc.dw_real;          /* d553 = w2505/destW */
         return 0;
     }
     /* phase 2: (budget+1) program tokens per call */
@@ -290,30 +292,31 @@ static int scaler_tick(int reset)
 /* ==== fn0A0D_11F3 — the mip-list walker ==================================== */
 static struct {
     int phase;        /* b385B: 0 latch, 1 next pair, 2 scaling */
-    u16 list;         /* d54B list cursor (DGROUP offset)       */
-    int d547;         /* dest aDEEE slot cursor                 */
+    int k;            /* d54B list cursor — PAIR INDEX into g_miplist
+                       * (was the DGROUP offset walking 0x3837 += 4)  */
+    int d547;         /* dest sprite-directory slot cursor            */
 } mw;
 
-/* one fn0A0D_11F3 call; reset != 0 rearms. Returns the new tEF52 when the whole
- * list is done, else 0. */
-static int mip_tick(u16 list, int reset)
+/* one fn0A0D_11F3 call over the g_miplist pair list; reset != 0 rearms.
+ * Returns the new tEF52 when the whole list is done, else 0. */
+static int mip_tick(int reset)
 {
     if (reset) { mw.phase = 0; scaler_tick(1); return 0; }
     if (mw.phase == 0) {
-        mw.list = list;
-        mw.d547 = (int)GW(0xEF52);
+        mw.k = 0;
+        mw.d547 = (int)Gw_spr_count;
         mw.phase = 1;
         return 0;
     }
     if (mw.phase == 1) {
-        i16 src = GI(mw.list);
-        if (src < 0) { mw.phase = 0; return mw.d547; }     /* list end */
+        i16 src = g_miplist[mw.k * 2];
+        if (src < 0) { mw.phase = 0; return mw.d547; }     /* -1 terminator */
         sc.src_idx = (int)src;
         ff_dir_dims(sc.src_idx, &sc.sw, &sc.sh);
-        sc.prog = GPTR(0x2521 + GI(mw.list + 2) * 0x16);
-        sc.dst_idx = mw.d547;              /* this mip lands at aDEEE[d547] (== rt slot) */
+        sc.prog = ffd_decimation_programs[g_miplist[mw.k * 2 + 1]];
+        sc.dst_idx = mw.d547;              /* this mip lands at g_sprdir[d547] (== rt slot) */
         sc.phase = 0;
-        mw.list += 4;
+        mw.k += 1;
         mw.phase = 2;
         return 0;
     }
@@ -321,10 +324,10 @@ static int mip_tick(u16 list, int reset)
     int w = scaler_tick(0);
     if (w != 0) {
         int idx = mw.d547;                                  /* register the mip */
-        if ((u32)(0xDEEE + idx * 4) + 4 <= sizeof(struct Globals)) {
-            GW(0xDEEE + idx * 4) = (u16)sc.dst;
-            GW(0xDEF0 + idx * 4) = 0x0004;
-            GB(0xF087 + idx)     = (u8)(w & 0xFF);
+        if (idx < SPRDIR_MAX) {
+            g_sprdir[idx].off = (u16)sc.dst;
+            g_sprdir[idx].seg = 0x0004;
+            g_sprw[idx]       = (u8)(w & 0xFF);
         }
         mw.d547 += 1;
         mw.phase = 1;
@@ -340,28 +343,32 @@ static int cur_dst;    /* the last rt_new_shape slot (the blit dest)  */
 
 static void composer_build_miplist(void)
 {
-    /* op 4/5/6: 0x3837 idx halves = 0x3827[k] + base (xform halves static) */
+    /* op 4/5/6: the mip list's SRC halves = spawn_offsets[k] + base (the
+     * XFORM halves + the -1 terminator stay as seeded from ffd_miplist_init
+     * — THE 0x3837 mixed static/dynamic pattern, now explicit in g_miplist) */
     for (int k = 0; k < 8; ++k)
-        GI(0x3837 + k * 4) = (i16)(GI(0x3827 + k * 2) + cs_base);
+        g_miplist[k * 2] = (i16)(ffd_spawn_offsets[k] + cs_base);
 }
 
 static void composer_reset(void)
 {
     cs_state = 0;
-    mip_tick(0, 1);        /* FUN_120d_11f3(x, 1) via the op-0 path */
+    mip_tick(1);           /* FUN_120d_11f3(x, 1) via the op-0 path */
 }
 
-/* one fn0A0D_0D08 call on the stream at DGROUP offset *cur.
+/* one fn0A0D_0D08 call on the stream at composer-cursor `cur` (the cursor
+ * keeps the ORIGINAL DGROUP-offset convention; the bytes come from the
+ * const ffd_shape_streams data @0xF3A).
  * Returns the cursor advance, 0 = busy (no advance), -1 = shape done. */
 static int composer_step(u16 cur)
 {
-    const u8 *p = GPTR(cur);
+    const u8 *p = ffd_shape_streams + (cur - 0x0F3A);
     switch (p[0]) {
     case 0:                                     /* END */
         composer_reset();
         return -1;
     case 1:                                     /* NEW + base latch */
-        cs_base = (int)GW(0xEF52);
+        cs_base = (int)Gw_spr_count;
         cur_dst = rt_new_shape(p[2], p[1]);
         return 3;
     case 8:                                     /* NEW (no latch) */
@@ -379,10 +386,10 @@ static int composer_step(u16 cur)
     case 4:                                     /* FINALIZE: mips */
         if (cs_state == 0) { cs_state = 1; composer_build_miplist(); return 0; }
         else {
-            int r = mip_tick(0x3837, 0);
+            int r = mip_tick(0);
             if (r == 0) return 0;
             cs_state = 0;
-            GW(0xEF52) = (u16)r;
+            Gw_spr_count = (u16)r;
             return 1;
         }
     case 5:                                     /* PAIR: copy src, src+1 + mips */
@@ -390,7 +397,7 @@ static int composer_step(u16 cur)
         int mirror = (p[0] == 6);
         if (cs_state == 0) {
             cs_state = 1;
-            cs_base = (int)GW(0xEF52);
+            cs_base = (int)Gw_spr_count;
             cs_src  = (int)p[1];
             int w = 0, h = 0;
             ff_dir_dims(cs_src, &w, &h);
@@ -409,10 +416,10 @@ static int composer_step(u16 cur)
             composer_build_miplist();
             return 0;
         } else {
-            int r = mip_tick(0x3837, 0);
+            int r = mip_tick(0);
             if (r == 0) return 0;
             cs_state = 0;
-            GW(0xEF52) = (u16)r;
+            Gw_spr_count = (u16)r;
             return -1;                          /* one-op shapes end here */
         }
     }
@@ -425,92 +432,92 @@ static int composer_step(u16 cur)
 void path_vm_tick(int arm, int side)
 {
     if (arm) {
-        GW(0xD7B4) = GW(0xF6BA);               /* cursor = the wave-VM PC */
+        Gw_path_pc = Gw_wave_pc;               /* cursor = the wave-VM PC */
         composer_reset();                      /* fn0A0D_0D08 on a zero byte */
-        GW(0xF7D9) = 0x00;
-        GW(0xF7D3) = 0x00;
-        GB(0xF7DB) = 0x00;
-        GB(0x38A7) = 0x00;
-        GB(0x38AA) = 0x00;
-        GW(0xEF52) = GW(0xDE69);               /* rebase to the runtime area */
+        Gw_buf_half = 0x00;
+        Gw_path_marker_idx = 0x00;
+        Gb_path_side = 0x00;
+        Gb_path_side_latch = 0x00;
+        Gb_build_state = 0x00;
+        Gw_spr_count = Gw_spr_count_saved;               /* rebase to the runtime area */
         /* aDEEE[tDE69] = ptrDC7A+4 in the original (the build-buffer base);
          * the port registers rt slots on demand instead. */
-        GW(0x38A8) = 0x01;
-        GI(0xF46C) = 0x00;                     /* wF46C[0] = 0 */
+        Gw_w38A8 = 0x01;
+        Gi_shape_marker0 = 0x00;                     /* wF46C[0] = 0 */
         rt_free_all();                         /* fresh runtime bank */
     }
 
-    u16 pc = GW(0xD7B4);
-    u8 op = GB(pc);
+    u16 pc = Gw_path_pc;
+    u8 op = wv_b(pc);
     if (op > 0x09) return;
 
     switch (op) {
     case 0x00:                                 /* side sync (script CLEAR) */
-        if ((i16)(i8)GB(0xF7DB) == (i16)side) {
-            GB(0xF7DB) ^= 0x01;
-            GW(0xD7B4) = (u16)(pc + 1);
-            if (GB(0x38A7) != 0x00) {
-                GW(0xEF52) = (u16)(GW(0xDE69) + 40);   /* second buffer half */
-                GW(0xF7D9) = 0x4000;
+        if ((i16)(i8)Gb_path_side == (i16)side) {
+            Gb_path_side ^= 0x01;
+            Gw_path_pc = (u16)(pc + 1);
+            if (Gb_path_side_latch != 0x00) {
+                Gw_spr_count = (u16)(Gw_spr_count_saved + 40);   /* second buffer half */
+                Gw_buf_half = 0x4000;
             } else {
-                GW(0xEF52) = GW(0xDE69);
-                GW(0xF7D9) = 0x00;
+                Gw_spr_count = Gw_spr_count_saved;
+                Gw_buf_half = 0x00;
             }
-            GB(0x38A7) ^= 0x01;
-            GW(0xF7D3) = 0x00;
+            Gb_path_side_latch ^= 0x01;
+            Gw_path_marker_idx = 0x00;
             /* aDEEE[tEF52] = bank-half base ptr — on-demand in the port */
         }
         break;
 
     case 0x01:                                 /* build shape (script GETCHAR) */
-        switch (GB(0x38AA)) {
+        switch (Gb_build_state) {
         case 0x00: {                           /* start: negative marker */
-            int idx = GB(pc + 1);
-            GI(0xF46C + GW(0xF7D3) * 2) = (i16)(-idx);
-            GW(0xF7CF) = GW(0x10B4 + idx * 4); /* stream cursor (seg = DGROUP) */
+            int idx = wv_b(pc + 1);
+            G_vm_marker(Gw_path_marker_idx) = (i16)(-idx);
+            Gw_shape_cursor = ffd_composer_dir[idx].off;   /* stream cursor */
             if (idx > 0x0A)                    /* record the base slot in the  */
-                GW(0x14AB + idx * 0x33) = GW(0xEF52);   /* TYPE PROTOTYPE +0x1B */
-            GB(0x38AA) = 0x01;
+                *(u16 *)((u8 *)&g_protos[idx] + 0x1B) = Gw_spr_count;  /* TYPE PROTOTYPE +0x1B */
+            Gb_build_state = 0x01;
             break;
         }
         case 0x01: {                           /* one composer step per frame */
-            int adv = composer_step(GW(0xF7CF));
-            GW(0x38A8) = 0x00;
-            if (adv < 0) GB(0x38AA) = 0x02;
-            else         GW(0xF7CF) = (u16)(GW(0xF7CF) + adv);
+            int adv = composer_step(Gw_shape_cursor);
+            Gw_w38A8 = 0x00;
+            if (adv < 0) Gb_build_state = 0x02;
+            else         Gw_shape_cursor = (u16)(Gw_shape_cursor + adv);
             break;
         }
         case 0x02:                             /* done: flip marker positive */
-            GI(0xF46C + GW(0xF7D3) * 2) = (i16)(-GI(0xF46C + GW(0xF7D3) * 2));
-            GW(0xF7D3) = (u16)(GW(0xF7D3) + 1);
-            GI(0xF46C + GW(0xF7D3) * 2) = 0x00;
-            GW(0xD7B4) = (u16)(pc + 2);
-            GB(0x38AA) = 0x00;
+            G_vm_marker(Gw_path_marker_idx) = (i16)(-G_vm_marker(Gw_path_marker_idx));
+            Gw_path_marker_idx = (u16)(Gw_path_marker_idx + 1);
+            G_vm_marker(Gw_path_marker_idx) = 0x00;
+            Gw_path_pc = (u16)(pc + 2);
+            Gb_build_state = 0x00;
             break;
         }
         break;
 
-    case 0x02: GW(0xD7B4) = (u16)(pc + 3); break;      /* PUT: skip     */
+    case 0x02: Gw_path_pc = (u16)(pc + 3); break;      /* PUT: skip     */
     case 0x03:                                          /* WHILE         */
-        if ((i16)GW(0xF6C6) <= 0 &&
-            ((i16)GW(0xF6C6) != 0 || (i16)(i8)GB(pc + 1) >= (i16)GW(0xF6C4)))
-            GW(0xD7B4) = (u16)(pc + 4);
+        if ((i16)Gw_objective_hi <= 0 &&
+            ((i16)Gw_objective_hi != 0 || (i16)(i8)wv_b(pc + 1) >= (i16)Gw_objective_lo))
+            Gw_path_pc = (u16)(pc + 4);
         else
-            GW(0xD7B4) = (u16)(GW(pc + 2) + 0xA0);
+            Gw_path_pc = (u16)(wv_w(pc + 2) + 0xA0);
         break;
-    case 0x04: GW(0xD7B4) = (u16)(GW(pc + 1) + 0xA0); break;   /* GOTO   */
-    case 0x05: GW(0xD7B4) = (u16)(pc + 3); break;      /* SETDIST: skip */
+    case 0x04: Gw_path_pc = (u16)(wv_w(pc + 1) + 0xA0); break;   /* GOTO   */
+    case 0x05: Gw_path_pc = (u16)(pc + 3); break;      /* SETDIST: skip */
     case 0x06:                                          /* GOSUB         */
-        GW(0xF7D5) = (u16)(pc + 3);                     /* ptrF7D5 return */
-        GW(0xD7B4) = (u16)(GW(pc + 1) + 0xA0);
+        Gw_path_ret = (u16)(pc + 3);                     /* ptrF7D5 return */
+        Gw_path_pc = (u16)(wv_w(pc + 1) + 0xA0);
         break;
-    case 0x07: GW(0xD7B4) = GW(0xF7D5); break;          /* RETURN        */
+    case 0x07: Gw_path_pc = Gw_path_ret; break;          /* RETURN        */
     case 0x08:                                          /* BEQ           */
-        if ((GW(0xF6C4) | GW(0xF6C6)) == 0x00)
-            GW(0xD7B4) = (u16)(GW(pc + 1) + 0xA0);
+        if ((Gw_objective_lo | Gw_objective_hi) == 0x00)
+            Gw_path_pc = (u16)(wv_w(pc + 1) + 0xA0);
         else
-            GW(0xD7B4) = (u16)(pc + 3);
+            Gw_path_pc = (u16)(pc + 3);
         break;
-    case 0x09: GW(0xD7B4) = (u16)(pc + 5); break;      /* WAVE: skip    */
+    case 0x09: Gw_path_pc = (u16)(pc + 5); break;      /* WAVE: skip    */
     }
 }

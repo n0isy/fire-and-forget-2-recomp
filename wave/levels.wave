@@ -1,0 +1,1301 @@
+; levels.wave -- Fire & Forget II wave/path-VM scripts,
+; disassembled losslessly from DGROUP 0xA0..0xCB2 (dir @0x94).
+; Mnemonics = the original tool's keyword table (DGROUP @0x355A).
+;
+; REC fields: type, depth(u8, z ahead of camera), y(i8), x(i8,
+;             screen ~= x*25/16), vz(i8, engine adds vz/2).
+; WAVE args:  record block, spawn count, z-distance between spawns.
+; DEFB     :  bytes never reached by either VM (verbatim);
+;             the `(dead)` comments decode them -- CUT CONTENT.
+
+
+; ======================= SCRIPT 0 =======================
+ENTRY 0
+script0:
+        SETDIST 10000        ; @00a0
+loc_003:        ; @00a3
+        GOSUB loc_671        ; @00a3
+        CLEAR        ; @00a6
+        GETCHAR JUMPER           ; @00a7  ; wait: sprite composed
+        GETCHAR T54              ; @00a9  ; wait: sprite composed
+        PUT  recs_ada_jumper        ; @00ab
+        GOSUB loc_671        ; @00ae
+        CLEAR        ; @00b1
+        GETCHAR RIDER            ; @00b2  ; wait: sprite composed
+        PUT  recs_975_rider        ; @00b4
+        PUT  recs_98a_rider        ; @00b7
+        PUT  recs_975_rider        ; @00ba
+        BEQ  loc_06b        ; @00bd  ; branch when dist == 0
+        CLEAR        ; @00c0
+        GETCHAR BID_FUEL         ; @00c1  ; wait: sprite composed
+        GETCHAR BID_KERO         ; @00c3  ; wait: sprite composed
+        PUT  recs_960_bid_fuel        ; @00c5
+        GOSUB loc_684        ; @00c8
+        GOSUB loc_6b5        ; @00cb
+        CLEAR        ; @00ce
+        GETCHAR RIDER            ; @00cf  ; wait: sprite composed
+        GETCHAR SIDE_CAR         ; @00d1  ; wait: sprite composed
+        PUT  recs_99f_side_car        ; @00d3
+        GOSUB loc_671        ; @00d6
+        CLEAR        ; @00d9
+        GETCHAR MINE_AIR         ; @00da  ; wait: sprite composed
+        PUT  recs_8dd_mine_air        ; @00dc
+        GOSUB loc_684        ; @00df
+        CLEAR        ; @00e2
+        GETCHAR POULE            ; @00e3  ; wait: sprite composed
+        GETCHAR EGG              ; @00e5  ; wait: sprite composed
+        PUT  recs_a65_poule        ; @00e7
+        CLEAR        ; @00ea
+        GETCHAR RIDER            ; @00eb  ; wait: sprite composed
+        GETCHAR SIDE_CAR         ; @00ed  ; wait: sprite composed
+        PUT  recs_9b4_side_car        ; @00ef
+        PUT  recs_975_rider        ; @00f2
+        PUT  recs_9c9_side_car        ; @00f5
+        GOSUB loc_6b2        ; @00f8
+        CLEAR        ; @00fb
+        GETCHAR MISSILES         ; @00fc  ; wait: sprite composed
+        PUT  recs_94b_missiles        ; @00fe
+        CLEAR        ; @0101
+        GETCHAR FLYING_H         ; @0102  ; wait: sprite composed
+        PUT  recs_afa_flying_h        ; @0104
+        WHILE 0, loc_003        ; @0107  ; while dist > 0<<4
+loc_06b:        ; @010b
+        CLEAR        ; @010b
+        GETCHAR B_CITERN         ; @010c  ; wait: sprite composed
+loc_06e:        ; @010e
+        PUT  recs_bd4_b_citern        ; @010e
+        GOTO loc_06e        ; @0111
+
+; ======================= SCRIPT 1 =======================
+ENTRY 1
+script1:
+        SETDIST 15000        ; @0114
+loc_077:        ; @0117
+        CLEAR        ; @0117
+        GETCHAR BID_KERO         ; @0118  ; wait: sprite composed
+        WAVE recs_913_bid_kero, 10, 64        ; @011a
+        CLEAR        ; @011f
+        GETCHAR T55              ; @0120  ; wait: sprite composed
+        GETCHAR MOUCHARD         ; @0122  ; wait: sprite composed
+        PUT  recs_b00_mouchard        ; @0124
+        CLEAR        ; @0127
+        GETCHAR MILICE1          ; @0128  ; wait: sprite composed
+        PUT  recs_b25_milice1        ; @012a
+        GOSUB loc_7b7        ; @012d
+        CLEAR        ; @0130
+        GETCHAR MISSILES         ; @0131  ; wait: sprite composed
+        WAVE recs_925_missiles, 10, 64        ; @0133
+        CLEAR        ; @0138
+        GETCHAR JUMPER           ; @0139  ; wait: sprite composed
+        GETCHAR T54              ; @013b  ; wait: sprite composed
+        PUT  recs_ada_jumper        ; @013d
+        BEQ  loc_140        ; @0140  ; branch when dist == 0
+        CLEAR        ; @0143
+        GETCHAR POULE            ; @0144  ; wait: sprite composed
+        GETCHAR EGG              ; @0146  ; wait: sprite composed
+        GETCHAR BOMBE_TH         ; @0148  ; wait: sprite composed
+        PUT  recs_a65_poule        ; @014a
+        WAVE recs_aae_bombe_th, 12, 255        ; @014d
+        CLEAR        ; @0152
+        GETCHAR JEEP_1           ; @0153  ; wait: sprite composed
+        PUT  recs_9d9_jeep_1        ; @0155
+        PUT  recs_9d9_jeep_1        ; @0158
+        PUT  recs_9d9_jeep_1        ; @015b
+        PUT  recs_9ee_jeep_1        ; @015e
+        BEQ  loc_140        ; @0161  ; branch when dist == 0
+        CLEAR        ; @0164
+        GETCHAR POULE            ; @0165  ; wait: sprite composed
+        GETCHAR EGG              ; @0167  ; wait: sprite composed
+        GETCHAR B_AIMANT         ; @0169  ; wait: sprite composed
+        PUT  recs_a65_poule        ; @016b
+        WAVE recs_a9d_b_aimant, 12, 255        ; @016e
+        CLEAR        ; @0173
+        GETCHAR JEEP_3           ; @0174  ; wait: sprite composed
+        PUT  recs_a2d_jeep_3        ; @0176
+        CLEAR        ; @0179
+        GETCHAR FLYING_H         ; @017a  ; wait: sprite composed
+        PUT  recs_afa_flying_h        ; @017c
+        CLEAR        ; @017f
+        GETCHAR FIRE_B           ; @0180  ; wait: sprite composed
+        WAVE recs_b95_fire_b, 4, 64        ; @0182
+        CLEAR        ; @0187
+        GETCHAR BID_FUEL         ; @0188  ; wait: sprite composed
+        PUT  recs_8ed_bid_fuel        ; @018a
+        CLEAR        ; @018d
+        GETCHAR MINE_AIR         ; @018e  ; wait: sprite composed
+        PUT  recs_8dd_mine_air        ; @0190
+        CLEAR        ; @0193
+        GETCHAR JEEP_1           ; @0194  ; wait: sprite composed
+        PUT  recs_9ee_jeep_1        ; @0196
+        PUT  recs_9ee_jeep_1        ; @0199
+        PUT  recs_9ee_jeep_1        ; @019c
+        CLEAR        ; @019f
+        GETCHAR JEEP_3           ; @01a0  ; wait: sprite composed
+        PUT  recs_a2d_jeep_3        ; @01a2
+        CLEAR        ; @01a5
+        GETCHAR CANON1           ; @01a6  ; wait: sprite composed
+        WAVE recs_833_canon1, 10, 128        ; @01a8
+        CLEAR        ; @01ad
+        GETCHAR EXT_LIFE         ; @01ae  ; wait: sprite composed
+        PUT  recs_810_ext_life        ; @01b0
+        CLEAR        ; @01b3
+        GETCHAR T55              ; @01b4  ; wait: sprite composed
+        GETCHAR MOUCHARD         ; @01b6  ; wait: sprite composed
+        PUT  recs_b00_mouchard        ; @01b8
+        CLEAR        ; @01bb
+        GETCHAR MILICE1          ; @01bc  ; wait: sprite composed
+        PUT  recs_b25_milice1        ; @01be
+        BEQ  loc_140        ; @01c1  ; branch when dist == 0
+        CLEAR        ; @01c4
+        GETCHAR BANZAI           ; @01c5  ; wait: sprite composed
+        PUT  recs_bc3_banzai        ; @01c7
+        CLEAR        ; @01ca
+        GETCHAR JEEP_1           ; @01cb  ; wait: sprite composed
+        PUT  recs_9ee_jeep_1        ; @01cd
+        PUT  recs_9ee_jeep_1        ; @01d0
+        PUT  recs_9ee_jeep_1        ; @01d3
+        CLEAR        ; @01d6
+        GETCHAR JEEP_3           ; @01d7  ; wait: sprite composed
+        PUT  recs_a2d_jeep_3        ; @01d9
+        WHILE 0, loc_077        ; @01dc  ; while dist > 0<<4
+loc_140:        ; @01e0
+        CLEAR        ; @01e0
+        GETCHAR BL_MINES         ; @01e1  ; wait: sprite composed
+        GETCHAR T69              ; @01e3  ; wait: sprite composed
+loc_145:        ; @01e5
+        PUT  recs_bda_bl_mines        ; @01e5
+        GOTO loc_145        ; @01e8
+
+; ======================= SCRIPT 2 =======================
+ENTRY 2
+script2:
+        SETDIST 20000        ; @01eb
+loc_14e:        ; @01ee
+        GOSUB loc_671        ; @01ee
+        CLEAR        ; @01f1
+        GETCHAR BID_FUEL         ; @01f2  ; wait: sprite composed
+        GETCHAR T57              ; @01f4  ; wait: sprite composed
+        GETCHAR SUCKER           ; @01f6  ; wait: sprite composed
+        PUT  recs_a7c_sucker        ; @01f8
+        GOSUB loc_75a        ; @01fb
+        CLEAR        ; @01fe
+        GETCHAR MISSILES         ; @01ff  ; wait: sprite composed
+        PUT  recs_94b_missiles        ; @0201
+        GETCHAR T61              ; @0204  ; wait: sprite composed
+        GETCHAR WALKER           ; @0206  ; wait: sprite composed
+        PUT  recs_a6b_walker        ; @0208
+        GOSUB loc_671        ; @020b
+        CLEAR        ; @020e
+        GETCHAR BID_FUEL         ; @020f  ; wait: sprite composed
+        GETCHAR BID_KERO         ; @0211  ; wait: sprite composed
+        PUT  recs_960_bid_fuel        ; @0213
+        PUT  recs_960_bid_fuel        ; @0216
+        GOSUB loc_70e        ; @0219
+        CLEAR        ; @021c
+        GETCHAR T61              ; @021d  ; wait: sprite composed
+        GETCHAR WALKER           ; @021f  ; wait: sprite composed
+        GETCHAR FLYING_H         ; @0221  ; wait: sprite composed
+        PUT  recs_a38_walker        ; @0223
+        GOSUB loc_684        ; @0226
+        BEQ  loc_260        ; @0229  ; branch when dist == 0
+        CLEAR        ; @022c
+        GETCHAR T55              ; @022d  ; wait: sprite composed
+        GETCHAR MOUCHARD         ; @022f  ; wait: sprite composed
+        PUT  recs_b10_mouchard        ; @0231
+        CLEAR        ; @0234
+        GETCHAR MILICE1          ; @0235  ; wait: sprite composed
+        PUT  recs_b25_milice1        ; @0237
+        CLEAR        ; @023a
+        GETCHAR BID_FUEL         ; @023b  ; wait: sprite composed
+        GETCHAR BID_KERO         ; @023d  ; wait: sprite composed
+        PUT  recs_960_bid_fuel        ; @023f
+        PUT  recs_960_bid_fuel        ; @0242
+        GOSUB loc_70e        ; @0245
+        GOSUB loc_7b7        ; @0248
+        CLEAR        ; @024b
+        GETCHAR BID_FUEL         ; @024c  ; wait: sprite composed
+        PUT  recs_902_bid_fuel        ; @024e
+        PUT  recs_902_bid_fuel        ; @0251
+        PUT  recs_902_bid_fuel        ; @0254
+        CLEAR        ; @0257
+        GETCHAR JUMPER           ; @0258  ; wait: sprite composed
+        GETCHAR T54              ; @025a  ; wait: sprite composed
+        PUT  recs_ada_jumper        ; @025c
+        CLEAR        ; @025f
+        GETCHAR BID_FUEL         ; @0260  ; wait: sprite composed
+        GETCHAR T57              ; @0262  ; wait: sprite composed
+        GETCHAR SUCKER           ; @0264  ; wait: sprite composed
+        PUT  recs_a7c_sucker        ; @0266
+        GOSUB loc_78f        ; @0269
+        GOSUB loc_6b2        ; @026c
+        BEQ  loc_260        ; @026f  ; branch when dist == 0
+        CLEAR        ; @0272
+        GETCHAR RIDER            ; @0273  ; wait: sprite composed
+        PUT  recs_975_rider        ; @0275
+        PUT  recs_98a_rider        ; @0278
+        PUT  recs_98a_rider        ; @027b
+        CLEAR        ; @027e
+        GETCHAR JEEP_1           ; @027f  ; wait: sprite composed
+        PUT  recs_9d9_jeep_1        ; @0281
+        PUT  recs_9ee_jeep_1        ; @0284
+        PUT  recs_9ee_jeep_1        ; @0287
+        GETCHAR JEEP_3           ; @028a  ; wait: sprite composed
+        PUT  recs_a18_jeep_3        ; @028c
+        GOSUB loc_671        ; @028f
+        BEQ  loc_260        ; @0292  ; branch when dist == 0
+        CLEAR        ; @0295
+        GETCHAR BID_FUEL         ; @0296  ; wait: sprite composed
+        GETCHAR BID_KERO         ; @0298  ; wait: sprite composed
+        PUT  recs_960_bid_fuel        ; @029a
+        PUT  recs_960_bid_fuel        ; @029d
+        GOSUB loc_7b7        ; @02a0
+        CLEAR        ; @02a3
+        GETCHAR T55              ; @02a4  ; wait: sprite composed
+        GETCHAR MOUCHARD         ; @02a6  ; wait: sprite composed
+        PUT  recs_b10_mouchard        ; @02a8
+        CLEAR        ; @02ab
+        GETCHAR MILICE2          ; @02ac  ; wait: sprite composed
+        PUT  recs_b2b_milice2        ; @02ae
+        CLEAR        ; @02b1
+        GETCHAR MISSILES         ; @02b2  ; wait: sprite composed
+        PUT  recs_94b_missiles        ; @02b4
+        CLEAR        ; @02b7
+        GETCHAR FLYING_H         ; @02b8  ; wait: sprite composed
+        PUT  recs_a43_flying_h        ; @02ba
+        CLEAR        ; @02bd
+        GETCHAR MISSILES         ; @02be  ; wait: sprite composed
+        PUT  recs_94b_missiles        ; @02c0
+        CLEAR        ; @02c3
+        GETCHAR FLYING_H         ; @02c4  ; wait: sprite composed
+        PUT  recs_a43_flying_h        ; @02c6
+        GOSUB loc_6e0        ; @02c9
+        CLEAR        ; @02cc
+        GETCHAR JEEP_1           ; @02cd  ; wait: sprite composed
+        PUT  recs_9d9_jeep_1        ; @02cf
+        PUT  recs_9ee_jeep_1        ; @02d2
+        PUT  recs_9ee_jeep_1        ; @02d5
+        GETCHAR JEEP_3           ; @02d8  ; wait: sprite composed
+        PUT  recs_a18_jeep_3        ; @02da
+        CLEAR        ; @02dd
+        GETCHAR JUMPER           ; @02de  ; wait: sprite composed
+        GETCHAR T54              ; @02e0  ; wait: sprite composed
+        PUT  recs_ae5_jumper        ; @02e2
+        GOSUB loc_671        ; @02e5
+        CLEAR        ; @02e8
+        GETCHAR BID_FUEL         ; @02e9  ; wait: sprite composed
+        GETCHAR BID_KERO         ; @02eb  ; wait: sprite composed
+        PUT  recs_960_bid_fuel        ; @02ed
+        PUT  recs_960_bid_fuel        ; @02f0
+        GOSUB loc_70e        ; @02f3
+        CLEAR        ; @02f6
+        GETCHAR EXT_LIFE         ; @02f7  ; wait: sprite composed
+        PUT  recs_810_ext_life        ; @02f9
+        WHILE 0, loc_14e        ; @02fc  ; while dist > 0<<4
+loc_260:        ; @0300
+        CLEAR        ; @0300
+        GETCHAR BL_RADAR         ; @0301  ; wait: sprite composed
+        GETCHAR GARDE_DC         ; @0303  ; wait: sprite composed
+loc_265:        ; @0305
+        PUT  recs_be0_bl_radar        ; @0305
+        GOTO loc_265        ; @0308
+
+; ======================= SCRIPT 3 =======================
+ENTRY 3
+script3:
+        SETDIST 25000        ; @030b
+loc_26e:        ; @030e
+        GOSUB loc_671        ; @030e
+        CLEAR        ; @0311
+        GETCHAR BID_FUEL         ; @0312  ; wait: sprite composed
+        GETCHAR BID_KERO         ; @0314  ; wait: sprite composed
+        PUT  recs_960_bid_fuel        ; @0316
+        PUT  recs_960_bid_fuel        ; @0319
+        CLEAR        ; @031c
+        GETCHAR B_AIMANT         ; @031d  ; wait: sprite composed
+        PUT  recs_aa3_b_aimant        ; @031f
+        PUT  recs_aa3_b_aimant        ; @0322
+        PUT  recs_aa3_b_aimant        ; @0325
+        PUT  recs_aa3_b_aimant        ; @0328
+        PUT  recs_aa3_b_aimant        ; @032b
+        GOSUB loc_5c7        ; @032e
+        GOSUB loc_782        ; @0331
+        CLEAR        ; @0334
+        GETCHAR BID_FUEL         ; @0335  ; wait: sprite composed
+        WAVE recs_8ed_bid_fuel, 6, 64        ; @0337
+        GOSUB loc_65b        ; @033c
+        GOSUB loc_5b2        ; @033f
+        CLEAR        ; @0342
+        GETCHAR POT_GUN          ; @0343  ; wait: sprite composed
+        PUT  recs_b48_pot_gun        ; @0345
+        BEQ  loc_423        ; @0348  ; branch when dist == 0
+        CLEAR        ; @034b
+        GETCHAR RIDER            ; @034c  ; wait: sprite composed
+        PUT  recs_975_rider        ; @034e
+        PUT  recs_98a_rider        ; @0351
+        PUT  recs_975_rider        ; @0354
+        CLEAR        ; @0357
+        GETCHAR T61              ; @0358  ; wait: sprite composed
+        GETCHAR WALKER           ; @035a  ; wait: sprite composed
+        PUT  recs_a71_walker        ; @035c
+        CLEAR        ; @035f
+        GETCHAR JEEP_1           ; @0360  ; wait: sprite composed
+        GETCHAR JEEP_3           ; @0362  ; wait: sprite composed
+        PUT  recs_9d9_jeep_1        ; @0364
+        PUT  recs_9ee_jeep_1        ; @0367
+        PUT  recs_9ee_jeep_1        ; @036a
+        PUT  recs_a18_jeep_3        ; @036d
+        PUT  recs_a18_jeep_3        ; @0370
+        CLEAR        ; @0373
+        GETCHAR T55              ; @0374  ; wait: sprite composed
+        GETCHAR MOUCHARD         ; @0376  ; wait: sprite composed
+        GETCHAR B_AIMANT         ; @0378  ; wait: sprite composed
+        PUT  recs_b00_mouchard        ; @037a
+        WAVE recs_a82_b_aimant, 20, 255        ; @037d
+        CLEAR        ; @0382
+        GETCHAR FLYING_M         ; @0383  ; wait: sprite composed
+        PUT  recs_b31_flying_m        ; @0385
+        BEQ  loc_423        ; @0388  ; branch when dist == 0
+        GOSUB loc_671        ; @038b
+        CLEAR        ; @038e
+        GETCHAR BID_FUEL         ; @038f  ; wait: sprite composed
+        GETCHAR BID_KERO         ; @0391  ; wait: sprite composed
+        PUT  recs_960_bid_fuel        ; @0393
+        PUT  recs_960_bid_fuel        ; @0396
+        GOSUB loc_70e        ; @0399
+        CLEAR        ; @039c
+        GETCHAR BID_KERO         ; @039d  ; wait: sprite composed
+        GETCHAR MINE_AIR         ; @039f  ; wait: sprite composed
+        PUT  recs_93b_bid_kero        ; @03a1
+        PUT  recs_93b_bid_kero        ; @03a4
+        PUT  recs_93b_bid_kero        ; @03a7
+        GOSUB loc_70e        ; @03aa
+        BEQ  loc_423        ; @03ad  ; branch when dist == 0
+        GOSUB loc_7d9        ; @03b0
+        GOSUB loc_64b        ; @03b3
+        CLEAR        ; @03b6
+        GETCHAR JEEP_2           ; @03b7  ; wait: sprite composed
+        PUT  recs_a03_jeep_2        ; @03b9
+        PUT  recs_a03_jeep_2        ; @03bc
+        GOSUB loc_640        ; @03bf
+        GOSUB loc_5e7        ; @03c2
+        CLEAR        ; @03c5
+        GETCHAR SPEED_B          ; @03c6  ; wait: sprite composed
+        WAVE recs_b7a_speed_b, 4, 40        ; @03c8
+        CLEAR        ; @03cd
+        GETCHAR BID_FUEL         ; @03ce  ; wait: sprite composed
+        GETCHAR T57              ; @03d0  ; wait: sprite composed
+        GETCHAR SUCKER           ; @03d2  ; wait: sprite composed
+        PUT  recs_a7c_sucker        ; @03d4
+        BEQ  loc_423        ; @03d7  ; branch when dist == 0
+        CLEAR        ; @03da
+        GETCHAR FLYING_H         ; @03db  ; wait: sprite composed
+        PUT  recs_a43_flying_h        ; @03dd
+        CLEAR        ; @03e0
+        GETCHAR T61              ; @03e1  ; wait: sprite composed
+        GETCHAR WALKER           ; @03e3  ; wait: sprite composed
+        PUT  recs_a71_walker        ; @03e5
+        CLEAR        ; @03e8
+        GETCHAR T55              ; @03e9  ; wait: sprite composed
+        GETCHAR MOUCHARD         ; @03eb  ; wait: sprite composed
+        PUT  recs_b10_mouchard        ; @03ed
+        CLEAR        ; @03f0
+        GETCHAR FLYING_M         ; @03f1  ; wait: sprite composed
+        GETCHAR MILICE2          ; @03f3  ; wait: sprite composed
+        PUT  recs_b37_flying_m        ; @03f5
+        BEQ  loc_423        ; @03f8  ; branch when dist == 0
+        CLEAR        ; @03fb
+        GETCHAR FIERY_B          ; @03fc  ; wait: sprite composed
+        WAVE recs_b9b_fiery_b, 4, 64        ; @03fe
+        GOSUB loc_7f7        ; @0403
+        GOSUB loc_666        ; @0406
+        CLEAR        ; @0409
+        GETCHAR T55              ; @040a  ; wait: sprite composed
+        GETCHAR MOUCHARD         ; @040c  ; wait: sprite composed
+        GETCHAR B_AIMANT         ; @040e  ; wait: sprite composed
+        PUT  recs_b00_mouchard        ; @0410
+        WAVE recs_a82_b_aimant, 20, 255        ; @0413
+        CLEAR        ; @0418
+        GETCHAR FLYING_M         ; @0419  ; wait: sprite composed
+        GETCHAR MILICE2          ; @041b  ; wait: sprite composed
+        PUT  recs_b37_flying_m        ; @041d
+        CLEAR        ; @0420
+        GETCHAR BANZAI           ; @0421  ; wait: sprite composed
+        WAVE recs_bc3_banzai, 4, 255        ; @0423
+        CLEAR        ; @0428
+        GETCHAR POULE            ; @0429  ; wait: sprite composed
+        GETCHAR EGG              ; @042b  ; wait: sprite composed
+        PUT  recs_a65_poule        ; @042d
+        CLEAR        ; @0430
+        GETCHAR CANON1           ; @0431  ; wait: sprite composed
+        PUT  recs_833_canon1        ; @0433
+        PUT  recs_833_canon1        ; @0436
+        CLEAR        ; @0439
+        GETCHAR CANON2           ; @043a  ; wait: sprite composed
+        PUT  recs_839_canon2        ; @043c
+        PUT  recs_839_canon2        ; @043f
+        PUT  recs_839_canon2        ; @0442
+        CLEAR        ; @0445
+        GETCHAR BOMBE_TH         ; @0446  ; wait: sprite composed
+        GETCHAR B_AIMANT         ; @0448  ; wait: sprite composed
+        PUT  recs_a82_b_aimant        ; @044a
+        PUT  recs_a82_b_aimant        ; @044d
+        PUT  recs_a82_b_aimant        ; @0450
+        PUT  recs_a82_b_aimant        ; @0453
+        PUT  recs_a82_b_aimant        ; @0456
+        PUT  recs_a82_b_aimant        ; @0459
+        PUT  recs_a82_b_aimant        ; @045c
+        PUT  recs_a82_b_aimant        ; @045f
+        BEQ  loc_423        ; @0462  ; branch when dist == 0
+        CLEAR        ; @0465
+        GETCHAR BID_FUEL         ; @0466  ; wait: sprite composed
+        GETCHAR T57              ; @0468  ; wait: sprite composed
+        GETCHAR SUCKER           ; @046a  ; wait: sprite composed
+        PUT  recs_a7c_sucker        ; @046c
+        CLEAR        ; @046f
+        GETCHAR SPEED_B          ; @0470  ; wait: sprite composed
+        PUT  recs_b80_speed_b        ; @0472
+        PUT  recs_b80_speed_b        ; @0475
+        CLEAR        ; @0478
+        GETCHAR BID_KERO         ; @0479  ; wait: sprite composed
+        WAVE recs_93b_bid_kero, 4, 64        ; @047b
+        CLEAR        ; @0480
+        GETCHAR BOMBE_TH         ; @0481  ; wait: sprite composed
+        GETCHAR B_AIMANT         ; @0483  ; wait: sprite composed
+        PUT  recs_a82_b_aimant        ; @0485
+        PUT  recs_a82_b_aimant        ; @0488
+        PUT  recs_a82_b_aimant        ; @048b
+        PUT  recs_a82_b_aimant        ; @048e
+        PUT  recs_a82_b_aimant        ; @0491
+        PUT  recs_a82_b_aimant        ; @0494
+        PUT  recs_a82_b_aimant        ; @0497
+        PUT  recs_a82_b_aimant        ; @049a
+        CLEAR        ; @049d
+        GETCHAR JUMPER           ; @049e  ; wait: sprite composed
+        GETCHAR T54              ; @04a0  ; wait: sprite composed
+        PUT  recs_ae5_jumper        ; @04a2
+        BEQ  loc_423        ; @04a5  ; branch when dist == 0
+        CLEAR        ; @04a8
+        GETCHAR JERRY            ; @04a9  ; wait: sprite composed
+        GETCHAR TOM              ; @04ab  ; wait: sprite composed
+        PUT  recs_816_tom        ; @04ad
+        CLEAR        ; @04b0
+        GETCHAR JEEP_2           ; @04b1  ; wait: sprite composed
+        PUT  recs_a03_jeep_2        ; @04b3
+        PUT  recs_a03_jeep_2        ; @04b6
+        CLEAR        ; @04b9
+        GETCHAR EXT_LIFE         ; @04ba  ; wait: sprite composed
+        PUT  recs_810_ext_life        ; @04bc
+        WHILE 0, loc_26e        ; @04bf  ; while dist > 0<<4
+loc_423:        ; @04c3
+        CLEAR        ; @04c3
+        GETCHAR T66              ; @04c4  ; wait: sprite composed
+        PUT  recs_bf5_t66        ; @04c6
+        CLEAR        ; @04c9
+        GETCHAR BL_MISSI         ; @04ca  ; wait: sprite composed
+        PUT  recs_bfb_bl_missi        ; @04cc
+        GOTO loc_423        ; @04cf
+
+; ======================= SCRIPT 4 =======================
+ENTRY 4
+script4:
+        SETDIST 30000        ; @04d2
+loc_435:        ; @04d5
+        GOSUB loc_5a9        ; @04d5
+        CLEAR        ; @04d8
+        GETCHAR MISSILES         ; @04d9  ; wait: sprite composed
+        WAVE recs_925_missiles, 4, 64        ; @04db
+        CLEAR        ; @04e0
+        GETCHAR JUMPER           ; @04e1  ; wait: sprite composed
+        GETCHAR T54              ; @04e3  ; wait: sprite composed
+        PUT  recs_ae5_jumper        ; @04e5
+        BEQ  loc_58c        ; @04e8  ; branch when dist == 0
+        CLEAR        ; @04eb
+        GETCHAR CHAR1            ; @04ec  ; wait: sprite composed
+        WAVE recs_821_char1, 4, 128        ; @04ee
+        GOSUB loc_640        ; @04f3
+        CLEAR        ; @04f6
+        GETCHAR BID_KERO         ; @04f7  ; wait: sprite composed
+        WAVE recs_913_bid_kero, 4, 64        ; @04f9
+        CLEAR        ; @04fe
+        GETCHAR CHAR1            ; @04ff  ; wait: sprite composed
+        WAVE recs_821_char1, 4, 128        ; @0501
+        CLEAR        ; @0506
+        GETCHAR MISSILES         ; @0507  ; wait: sprite composed
+        WAVE recs_925_missiles, 4, 64        ; @0509
+        BEQ  loc_58c        ; @050e  ; branch when dist == 0
+        CLEAR        ; @0511
+        GETCHAR RIDER            ; @0512  ; wait: sprite composed
+        PUT  recs_975_rider        ; @0514
+        PUT  recs_98a_rider        ; @0517
+        PUT  recs_975_rider        ; @051a
+        CLEAR        ; @051d
+        GETCHAR HELICOP          ; @051e  ; wait: sprite composed
+        GETCHAR T62              ; @0520  ; wait: sprite composed
+        GETCHAR T65              ; @0522  ; wait: sprite composed
+        WAVE recs_b69_helicop, 6, 255        ; @0524
+        CLEAR        ; @0529
+        GETCHAR BID_FUEL         ; @052a  ; wait: sprite composed
+        GETCHAR T57              ; @052c  ; wait: sprite composed
+        GETCHAR SUCKER           ; @052e  ; wait: sprite composed
+        PUT  recs_a7c_sucker        ; @0530
+        CLEAR        ; @0533
+        GETCHAR SPEED_B          ; @0534  ; wait: sprite composed
+        WAVE recs_b7a_speed_b, 7, 255        ; @0536
+        CLEAR        ; @053b
+        GETCHAR HELICOP          ; @053c  ; wait: sprite composed
+        GETCHAR T62              ; @053e  ; wait: sprite composed
+        GETCHAR T65              ; @0540  ; wait: sprite composed
+        PUT  recs_b69_helicop        ; @0542
+        CLEAR        ; @0545
+        GETCHAR POULE            ; @0546  ; wait: sprite composed
+        GETCHAR EGG              ; @0548  ; wait: sprite composed
+        PUT  recs_a65_poule        ; @054a
+        CLEAR        ; @054d
+        GETCHAR POT_GUN          ; @054e  ; wait: sprite composed
+        WAVE recs_b48_pot_gun, 3, 255        ; @0550
+        CLEAR        ; @0555
+        GETCHAR FIRE_B           ; @0556  ; wait: sprite composed
+        WAVE recs_b95_fire_b, 7, 255        ; @0558
+        CLEAR        ; @055d
+        GETCHAR RIDER            ; @055e  ; wait: sprite composed
+        PUT  recs_975_rider        ; @0560
+        PUT  recs_98a_rider        ; @0563
+        PUT  recs_975_rider        ; @0566
+        CLEAR        ; @0569
+        GETCHAR CHAR2            ; @056a  ; wait: sprite composed
+        WAVE recs_827_char2, 4, 128        ; @056c
+        CLEAR        ; @0571
+        GETCHAR T55              ; @0572  ; wait: sprite composed
+        GETCHAR MOUCHARD         ; @0574  ; wait: sprite composed
+        PUT  recs_b10_mouchard        ; @0576
+        CLEAR        ; @0579
+        GETCHAR MILICE_I         ; @057a  ; wait: sprite composed
+        PUT  recs_b42_milice_i        ; @057c
+        GOSUB loc_7b7        ; @057f
+        CLEAR        ; @0582
+        GETCHAR BID_KERO         ; @0583  ; wait: sprite composed
+        WAVE recs_919_bid_kero, 4, 64        ; @0585
+        CLEAR        ; @058a
+        GETCHAR GRIBOUY          ; @058b  ; wait: sprite composed
+        WAVE recs_b74_gribouy, 7, 255        ; @058d
+        CLEAR        ; @0592
+        GETCHAR BID_FUEL         ; @0593  ; wait: sprite composed
+        GETCHAR T57              ; @0595  ; wait: sprite composed
+        GETCHAR SUCKER           ; @0597  ; wait: sprite composed
+        PUT  recs_a7c_sucker        ; @0599
+        CLEAR        ; @059c
+        GETCHAR MISSILES         ; @059d  ; wait: sprite composed
+        WAVE recs_925_missiles, 4, 64        ; @059f
+        BEQ  loc_58c        ; @05a4  ; branch when dist == 0
+        CLEAR        ; @05a7
+        GETCHAR CHAR3            ; @05a8  ; wait: sprite composed
+        WAVE recs_82d_char3, 4, 255        ; @05aa
+        CLEAR        ; @05af
+        GETCHAR CANON2           ; @05b0  ; wait: sprite composed
+        PUT  recs_a5a_canon2        ; @05b2
+        PUT  recs_a5a_canon2        ; @05b5
+        PUT  recs_a5a_canon2        ; @05b8
+        PUT  recs_a5a_canon2        ; @05bb
+        PUT  recs_a5a_canon2        ; @05be
+        PUT  recs_a5a_canon2        ; @05c1
+        PUT  recs_a5a_canon2        ; @05c4
+        PUT  recs_a5a_canon2        ; @05c7
+        PUT  recs_a5a_canon2        ; @05ca
+        PUT  recs_a5a_canon2        ; @05cd
+        PUT  recs_a5a_canon2        ; @05d0
+        PUT  recs_a5a_canon2        ; @05d3
+        CLEAR        ; @05d6
+        GETCHAR MISSILES         ; @05d7  ; wait: sprite composed
+        WAVE recs_925_missiles, 4, 64        ; @05d9
+        BEQ  loc_58c        ; @05de  ; branch when dist == 0
+        CLEAR        ; @05e1
+        GETCHAR FIERY_B          ; @05e2  ; wait: sprite composed
+        WAVE recs_b9b_fiery_b, 7, 255        ; @05e4
+        CLEAR        ; @05e9
+        GETCHAR HELICOP          ; @05ea  ; wait: sprite composed
+        GETCHAR T62              ; @05ec  ; wait: sprite composed
+        GETCHAR T65              ; @05ee  ; wait: sprite composed
+        WAVE recs_b69_helicop, 6, 255        ; @05f0
+        CLEAR        ; @05f5
+        GETCHAR FLYING_H         ; @05f6  ; wait: sprite composed
+        GETCHAR B_AIMANT         ; @05f8  ; wait: sprite composed
+        PUT  recs_afa_flying_h        ; @05fa
+        WAVE recs_a9d_b_aimant, 16, 255        ; @05fd
+        CLEAR        ; @0602
+        GETCHAR FIERY_B          ; @0603  ; wait: sprite composed
+        PUT  recs_ba1_fiery_b        ; @0605
+        CLEAR        ; @0608
+        GETCHAR MISSILES         ; @0609  ; wait: sprite composed
+        WAVE recs_925_missiles, 4, 64        ; @060b
+        CLEAR        ; @0610
+        GETCHAR BID_FUEL         ; @0611  ; wait: sprite composed
+        GETCHAR T57              ; @0613  ; wait: sprite composed
+        GETCHAR SUCKER           ; @0615  ; wait: sprite composed
+        PUT  recs_a7c_sucker        ; @0617
+        CLEAR        ; @061a
+        GETCHAR BID_KERO         ; @061b  ; wait: sprite composed
+        WAVE recs_913_bid_kero, 4, 64        ; @061d
+        CLEAR        ; @0622
+        GETCHAR EXT_LIFE         ; @0623  ; wait: sprite composed
+        PUT  recs_810_ext_life        ; @0625
+        WHILE 0, loc_435        ; @0628  ; while dist > 0<<4
+loc_58c:        ; @062c
+        CLEAR        ; @062c
+        GETCHAR BL_TETE          ; @062d  ; wait: sprite composed
+        GETCHAR GARDE_DC         ; @062f  ; wait: sprite composed
+        GETCHAR T67              ; @0631  ; wait: sprite composed
+loc_593:        ; @0633
+        PUT  recs_c01_bl_tete        ; @0633
+        GOTO loc_593        ; @0636
+
+; ======================= SCRIPT 5 =======================
+ENTRY 5
+script5:
+        CLEAR        ; @0639
+        GETCHAR T78              ; @063a  ; wait: sprite composed
+loc_59c:        ; @063c
+        PUT  recs_c0c_t78        ; @063c
+        GOTO loc_59c        ; @063f
+unused_5a2:        ; @0642  ; unreachable (cut content), kept verbatim
+        ; (dead) CLEAR                    ; @0642
+        ; (dead) GETCHAR EXT_LIFE         ; @0643
+        ; (dead) PUT  recs_810_ext_life   ; @0645
+        ; (dead) RETURN                   ; @0648
+        DEFB 0x00,0x01,0x44,0x02,0x10,0x08,0x07
+loc_5a9:        ; @0649
+        CLEAR        ; @0649
+        GETCHAR MINE_AIR         ; @064a  ; wait: sprite composed
+        GETCHAR BID_FUEL         ; @064c  ; wait: sprite composed
+        PUT  recs_83f_mine_air        ; @064e
+        RETURN        ; @0651
+loc_5b2:        ; @0652
+        CLEAR        ; @0652
+        GETCHAR MINE_AIR         ; @0653  ; wait: sprite composed
+        GETCHAR BOMBE_TH         ; @0655  ; wait: sprite composed
+        PUT  recs_893_mine_air        ; @0657
+        PUT  recs_893_mine_air        ; @065a
+        PUT  recs_893_mine_air        ; @065d
+        PUT  recs_893_mine_air        ; @0660
+        PUT  recs_aba_bombe_th        ; @0663
+        RETURN        ; @0666
+loc_5c7:        ; @0667
+        CLEAR        ; @0667
+        GETCHAR MISSILES         ; @0668  ; wait: sprite composed
+        WAVE recs_94b_missiles, 4, 64        ; @066a
+        CLEAR        ; @066f
+        GETCHAR MINE_AIR         ; @0670  ; wait: sprite composed
+        PUT  recs_854_mine_air        ; @0672
+        PUT  recs_854_mine_air        ; @0675
+        PUT  recs_854_mine_air        ; @0678
+        PUT  recs_854_mine_air        ; @067b
+        CLEAR        ; @067e
+        GETCHAR BOMBE_TH         ; @067f  ; wait: sprite composed
+        GETCHAR B_AIMANT         ; @0681  ; wait: sprite composed
+        PUT  recs_a8d_bombe_th        ; @0683
+        RETURN        ; @0686
+loc_5e7:        ; @0687
+        CLEAR        ; @0687
+        GETCHAR BID_KERO         ; @0688  ; wait: sprite composed
+        GETCHAR MISSILES         ; @068a  ; wait: sprite composed
+        GETCHAR BOMBE_TH         ; @068c  ; wait: sprite composed
+        PUT  recs_aba_bombe_th        ; @068e
+        PUT  recs_919_bid_kero        ; @0691
+        PUT  recs_91f_missiles        ; @0694
+        PUT  recs_aba_bombe_th        ; @0697
+        PUT  recs_913_bid_kero        ; @069a
+        PUT  recs_925_missiles        ; @069d
+        PUT  recs_aba_bombe_th        ; @06a0
+        PUT  recs_913_bid_kero        ; @06a3
+        PUT  recs_91f_missiles        ; @06a6
+        PUT  recs_aba_bombe_th        ; @06a9
+        PUT  recs_919_bid_kero        ; @06ac
+        PUT  recs_925_missiles        ; @06af
+        PUT  recs_aba_bombe_th        ; @06b2
+        RETURN        ; @06b5
+unused_616:        ; @06b6  ; unreachable (cut content), kept verbatim
+        ; (dead) CLEAR                    ; @06b6
+        ; (dead) GETCHAR BID_KERO         ; @06b7
+        ; (dead) GETCHAR MINE_AIR         ; @06b9
+        ; (dead) PUT  unused_90d          ; @06bb
+        ; (dead) PUT  recs_919_bid_kero   ; @06be
+        ; (dead) PUT  unused_90d          ; @06c1
+        ; (dead) PUT  recs_919_bid_kero   ; @06c4
+        ; (dead) PUT  unused_90d          ; @06c7
+        ; (dead) PUT  recs_919_bid_kero   ; @06ca
+        ; (dead) PUT  unused_90d          ; @06cd
+        ; (dead) PUT  recs_919_bid_kero   ; @06d0
+        ; (dead) PUT  unused_90d          ; @06d3
+        ; (dead) RETURN                   ; @06d6
+        ; (dead) CLEAR                    ; @06d7
+        ; (dead) GETCHAR BOMBER_2         ; @06d8
+        ; (dead) GETCHAR TANK2            ; @06da
+        ; (dead) PUT  unused_bc9          ; @06dc
+        ; (dead) RETURN                   ; @06df
+        DEFB 0x00,0x01,0x03,0x01,0x1E,0x02,0x0D,0x09,0x02,0x19,0x09,0x02
+        DEFB 0x0D,0x09,0x02,0x19,0x09,0x02,0x0D,0x09,0x02,0x19,0x09,0x02
+        DEFB 0x0D,0x09,0x02,0x19,0x09,0x02,0x0D,0x09,0x07,0x00,0x01,0x32
+        DEFB 0x01,0x13,0x02,0xC9,0x0B,0x07
+loc_640:        ; @06e0
+        CLEAR        ; @06e0
+        GETCHAR BOMBER_2         ; @06e1  ; wait: sprite composed
+        GETCHAR T62              ; @06e3  ; wait: sprite composed
+        GETCHAR T65              ; @06e5  ; wait: sprite composed
+        PUT  recs_bac_bomber_2        ; @06e7
+        RETURN        ; @06ea
+loc_64b:        ; @06eb
+        CLEAR        ; @06eb
+        GETCHAR BOMBER           ; @06ec  ; wait: sprite composed
+        GETCHAR BOMBER_2         ; @06ee  ; wait: sprite composed
+        GETCHAR T62              ; @06f0  ; wait: sprite composed
+        GETCHAR T65              ; @06f2  ; wait: sprite composed
+        PUT  recs_bac_bomber_2        ; @06f4
+        PUT  recs_bb2_bomber        ; @06f7
+        RETURN        ; @06fa
+loc_65b:        ; @06fb
+        CLEAR        ; @06fb
+        GETCHAR BOMBER           ; @06fc  ; wait: sprite composed
+        GETCHAR T62              ; @06fe  ; wait: sprite composed
+        GETCHAR T65              ; @0700  ; wait: sprite composed
+        PUT  recs_bb2_bomber        ; @0702
+        RETURN        ; @0705
+loc_666:        ; @0706
+        CLEAR        ; @0706
+        GETCHAR BOMBER           ; @0707  ; wait: sprite composed
+        GETCHAR T62              ; @0709  ; wait: sprite composed
+        GETCHAR T65              ; @070b  ; wait: sprite composed
+        PUT  recs_bb8_bomber        ; @070d
+        RETURN        ; @0710
+loc_671:        ; @0711
+        CLEAR        ; @0711
+        GETCHAR BID_FUEL         ; @0712  ; wait: sprite composed
+        PUT  recs_8ed_bid_fuel        ; @0714
+        PUT  recs_8ed_bid_fuel        ; @0717
+        PUT  recs_8ed_bid_fuel        ; @071a
+        PUT  recs_8ed_bid_fuel        ; @071d
+        PUT  recs_8ed_bid_fuel        ; @0720
+        RETURN        ; @0723
+loc_684:        ; @0724
+        CLEAR        ; @0724
+        GETCHAR MIRADOR          ; @0725  ; wait: sprite composed
+        PUT  recs_a4e_mirador        ; @0727
+        PUT  recs_a4e_mirador        ; @072a
+        PUT  recs_a4e_mirador        ; @072d
+        PUT  recs_a4e_mirador        ; @0730
+        PUT  recs_a4e_mirador        ; @0733
+        PUT  recs_a4e_mirador        ; @0736
+        PUT  recs_a4e_mirador        ; @0739
+        PUT  recs_a4e_mirador        ; @073c
+        PUT  recs_a4e_mirador        ; @073f
+        PUT  recs_a4e_mirador        ; @0742
+        PUT  recs_a4e_mirador        ; @0745
+        PUT  recs_a4e_mirador        ; @0748
+        PUT  recs_a4e_mirador        ; @074b
+        PUT  recs_a4e_mirador        ; @074e
+        RETURN        ; @0751
+loc_6b2:        ; @0752
+        CLEAR        ; @0752
+        GETCHAR MIRADOR          ; @0753  ; wait: sprite composed
+loc_6b5:        ; @0755
+        PUT  recs_a54_mirador        ; @0755
+        PUT  recs_a54_mirador        ; @0758
+        PUT  recs_a54_mirador        ; @075b
+        PUT  recs_a54_mirador        ; @075e
+        PUT  recs_a54_mirador        ; @0761
+        PUT  recs_a54_mirador        ; @0764
+        PUT  recs_a54_mirador        ; @0767
+        PUT  recs_a54_mirador        ; @076a
+        PUT  recs_a54_mirador        ; @076d
+        PUT  recs_a54_mirador        ; @0770
+        PUT  recs_a54_mirador        ; @0773
+        PUT  recs_a54_mirador        ; @0776
+        PUT  recs_a54_mirador        ; @0779
+        PUT  recs_a54_mirador        ; @077c
+        RETURN        ; @077f
+loc_6e0:        ; @0780
+        CLEAR        ; @0780
+        GETCHAR MIRADOR          ; @0781  ; wait: sprite composed
+        PUT  recs_a4e_mirador        ; @0783
+        PUT  recs_a54_mirador        ; @0786
+        PUT  recs_a4e_mirador        ; @0789
+        PUT  recs_a54_mirador        ; @078c
+        PUT  recs_a4e_mirador        ; @078f
+        PUT  recs_a54_mirador        ; @0792
+        PUT  recs_a4e_mirador        ; @0795
+        PUT  recs_a54_mirador        ; @0798
+        PUT  recs_a4e_mirador        ; @079b
+        PUT  recs_a54_mirador        ; @079e
+        PUT  recs_a4e_mirador        ; @07a1
+        PUT  recs_a54_mirador        ; @07a4
+        PUT  recs_a4e_mirador        ; @07a7
+        PUT  recs_a54_mirador        ; @07aa
+        RETURN        ; @07ad
+loc_70e:        ; @07ae
+        CLEAR        ; @07ae
+        GETCHAR BOMBE_TH         ; @07af  ; wait: sprite composed
+        PUT  recs_aba_bombe_th        ; @07b1
+        PUT  recs_aba_bombe_th        ; @07b4
+        PUT  recs_aba_bombe_th        ; @07b7
+        PUT  recs_aba_bombe_th        ; @07ba
+        PUT  recs_aba_bombe_th        ; @07bd
+        PUT  recs_aba_bombe_th        ; @07c0
+        PUT  recs_aba_bombe_th        ; @07c3
+        PUT  recs_aba_bombe_th        ; @07c6
+        PUT  recs_aba_bombe_th        ; @07c9
+        PUT  recs_aba_bombe_th        ; @07cc
+        PUT  recs_aba_bombe_th        ; @07cf
+        PUT  recs_aba_bombe_th        ; @07d2
+        PUT  recs_aba_bombe_th        ; @07d5
+        PUT  recs_aba_bombe_th        ; @07d8
+        PUT  recs_aba_bombe_th        ; @07db
+        PUT  recs_aba_bombe_th        ; @07de
+        PUT  recs_aba_bombe_th        ; @07e1
+        PUT  recs_aba_bombe_th        ; @07e4
+        PUT  recs_aba_bombe_th        ; @07e7
+        PUT  recs_aba_bombe_th        ; @07ea
+        PUT  recs_aba_bombe_th        ; @07ed
+        PUT  recs_aba_bombe_th        ; @07f0
+        PUT  recs_aba_bombe_th        ; @07f3
+        PUT  recs_aba_bombe_th        ; @07f6
+        RETURN        ; @07f9
+loc_75a:        ; @07fa
+        CLEAR        ; @07fa
+        GETCHAR BOMBE_TH         ; @07fb  ; wait: sprite composed
+        PUT  recs_ab4_bombe_th        ; @07fd
+        PUT  recs_aae_bombe_th        ; @0800
+        PUT  recs_ab4_bombe_th        ; @0803
+        PUT  recs_aae_bombe_th        ; @0806
+        PUT  recs_ab4_bombe_th        ; @0809
+        PUT  recs_aae_bombe_th        ; @080c
+        PUT  recs_ab4_bombe_th        ; @080f
+        PUT  recs_aae_bombe_th        ; @0812
+        PUT  recs_ab4_bombe_th        ; @0815
+        PUT  recs_aae_bombe_th        ; @0818
+        PUT  recs_ab4_bombe_th        ; @081b
+        PUT  recs_aae_bombe_th        ; @081e
+        RETURN        ; @0821
+loc_782:        ; @0822
+        CLEAR        ; @0822
+        GETCHAR ECLAIR_1         ; @0823  ; wait: sprite composed
+        PUT  recs_b59_eclair_1        ; @0825
+        PUT  recs_b59_eclair_1        ; @0828
+        PUT  recs_b59_eclair_1        ; @082b
+        RETURN        ; @082e
+loc_78f:        ; @082f
+        CLEAR        ; @082f
+        GETCHAR MINE_AIR         ; @0830  ; wait: sprite composed
+        PUT  recs_854_mine_air        ; @0832
+        PUT  recs_854_mine_air        ; @0835
+        PUT  recs_854_mine_air        ; @0838
+        PUT  recs_854_mine_air        ; @083b
+        PUT  recs_854_mine_air        ; @083e
+        PUT  recs_854_mine_air        ; @0841
+        PUT  recs_854_mine_air        ; @0844
+        PUT  recs_854_mine_air        ; @0847
+        PUT  recs_854_mine_air        ; @084a
+        PUT  recs_854_mine_air        ; @084d
+        PUT  recs_854_mine_air        ; @0850
+        PUT  recs_854_mine_air        ; @0853
+        RETURN        ; @0856
+loc_7b7:        ; @0857
+        CLEAR        ; @0857
+        GETCHAR MINE_AIR         ; @0858  ; wait: sprite composed
+        PUT  recs_869_mine_air        ; @085a
+        PUT  recs_87e_mine_air        ; @085d
+        PUT  recs_893_mine_air        ; @0860
+        PUT  recs_8a8_mine_air        ; @0863
+        PUT  recs_8c8_mine_air        ; @0866
+        PUT  recs_8c8_mine_air        ; @0869
+        PUT  recs_8a8_mine_air        ; @086c
+        PUT  recs_893_mine_air        ; @086f
+        PUT  recs_87e_mine_air        ; @0872
+        PUT  recs_869_mine_air        ; @0875
+        RETURN        ; @0878
+loc_7d9:        ; @0879
+        CLEAR        ; @0879
+        GETCHAR BID_KERO         ; @087a  ; wait: sprite composed
+        GETCHAR MINE_AIR         ; @087c  ; wait: sprite composed
+        PUT  recs_92b_bid_kero        ; @087e
+        PUT  recs_92b_bid_kero        ; @0881
+        PUT  recs_92b_bid_kero        ; @0884
+        PUT  recs_92b_bid_kero        ; @0887
+        PUT  recs_92b_bid_kero        ; @088a
+        PUT  recs_92b_bid_kero        ; @088d
+        PUT  recs_92b_bid_kero        ; @0890
+        PUT  recs_92b_bid_kero        ; @0893
+        RETURN        ; @0896
+loc_7f7:        ; @0897
+        CLEAR        ; @0897
+        GETCHAR MINE_AIR         ; @0898  ; wait: sprite composed
+        PUT  recs_8bd_mine_air        ; @089a
+        PUT  recs_8bd_mine_air        ; @089d
+        PUT  recs_8bd_mine_air        ; @08a0
+        PUT  recs_8bd_mine_air        ; @08a3
+        PUT  recs_8bd_mine_air        ; @08a6
+        PUT  recs_8bd_mine_air        ; @08a9
+        PUT  recs_8bd_mine_air        ; @08ac
+        RETURN        ; @08af
+recs_810_ext_life:        ; @08b0
+        RECS 1              ; used by PUT
+        REC  EXT_LIFE,  255,   90,   20,  11
+recs_816_tom:        ; @08b6
+        RECS 2              ; used by PUT
+        REC  TOM,       255,    0,    0,   0
+        REC  JERRY,     255,    0,    0,   0
+recs_821_char1:        ; @08c1
+        RECS 1              ; used by WAVE
+        REC  CHAR1,     210,    0,   20,   0
+recs_827_char2:        ; @08c7
+        RECS 1              ; used by WAVE
+        REC  CHAR2,     240,    0,  -80,   0
+recs_82d_char3:        ; @08cd
+        RECS 1              ; used by WAVE
+        REC  CHAR3,     240,    0,    0,   0
+recs_833_canon1:        ; @08d3
+        RECS 1              ; used by PUT+WAVE
+        REC  CANON1,    240,    0,   50,   0
+recs_839_canon2:        ; @08d9
+        RECS 1              ; used by PUT
+        REC  CANON2,    240,    0,  -50,   0
+recs_83f_mine_air:        ; @08df
+        RECS 4              ; used by PUT
+        REC  MINE_AIR,  250,    0,   50,   0
+        REC  BID_FUEL,  220,    0,   50,   0
+        REC  BID_FUEL,  200,    0,   55,   0
+        REC  BID_FUEL,  200,    0,   45,   0
+recs_854_mine_air:        ; @08f4
+        RECS 4              ; used by PUT
+        REC  MINE_AIR,  240,   72,   50,   0
+        REC  MINE_AIR,  240,   72,  -50,   0
+        REC  MINE_AIR,  240,   24,   50,   0
+        REC  MINE_AIR,  240,   24,  -50,   0
+recs_869_mine_air:        ; @0909
+        RECS 4              ; used by PUT
+        REC  MINE_AIR,  240,   16,   60,   0
+        REC  MINE_AIR,  240,   32,   20,   0
+        REC  MINE_AIR,  240,   32,  -20,   0
+        REC  MINE_AIR,  240,   16,  -60,   0
+recs_87e_mine_air:        ; @091e
+        RECS 4              ; used by PUT
+        REC  MINE_AIR,  240,   48,   60,   0
+        REC  MINE_AIR,  240,   32,   20,   0
+        REC  MINE_AIR,  240,   32,  -20,   0
+        REC  MINE_AIR,  240,   48,  -60,   0
+recs_893_mine_air:        ; @0933
+        RECS 4              ; used by PUT
+        REC  MINE_AIR,  240,   48,   60,   0
+        REC  MINE_AIR,  240,   64,   20,   0
+        REC  MINE_AIR,  240,   64,  -20,   0
+        REC  MINE_AIR,  240,   48,  -60,   0
+recs_8a8_mine_air:        ; @0948
+        RECS 4              ; used by PUT
+        REC  MINE_AIR,  240,   80,   60,   0
+        REC  MINE_AIR,  240,   64,   20,   0
+        REC  MINE_AIR,  240,   64,  -20,   0
+        REC  MINE_AIR,  240,   80,  -60,   0
+recs_8bd_mine_air:        ; @095d
+        RECS 2              ; used by PUT
+        REC  MINE_AIR,  240,    0,   40,   0
+        REC  MINE_AIR,  240,    0,  -40,   0
+recs_8c8_mine_air:        ; @0968
+        RECS 4              ; used by PUT
+        REC  MINE_AIR,  240,   80,   60,   0
+        REC  MINE_AIR,  240,   96,   20,   0
+        REC  MINE_AIR,  240,   96,  -20,   0
+        REC  MINE_AIR,  240,   80,  -60,   0
+recs_8dd_mine_air:        ; @097d
+        RECS 3              ; used by PUT
+        REC  MINE_AIR,  240,    0,   60,   0
+        REC  MINE_AIR,  240,    0,   20,   0
+        REC  MINE_AIR,  240,    0,  -60,   0
+recs_8ed_bid_fuel:        ; @098d
+        RECS 4              ; used by PUT+WAVE
+        REC  BID_FUEL,  240,    0,   60,   0
+        REC  BID_FUEL,  240,    0,   20,   0
+        REC  BID_FUEL,  240,    0,  -20,   0
+        REC  BID_FUEL,  240,    0,  -60,   0
+recs_902_bid_fuel:        ; @09a2
+        RECS 2              ; used by PUT
+        REC  BID_FUEL,  240,    0,  -60,   0
+        REC  BID_FUEL,  240,    0,   60,   0
+unused_90d:        ; @09ad  ; unreachable (cut content), kept verbatim
+        ; (dead) RECS 1           -- orphaned record block (cut content)
+        ; (dead) REC  MINE_AIR,  240,    0,   40,   0
+        DEFB 0x01,0x1E,0xF0,0x00,0x28,0x00
+recs_913_bid_kero:        ; @09b3
+        RECS 1              ; used by PUT+WAVE
+        REC  BID_KERO,  240,    0,  -40,   0
+recs_919_bid_kero:        ; @09b9
+        RECS 1              ; used by PUT+WAVE
+        REC  BID_KERO,  240,    0,   40,   0
+recs_91f_missiles:        ; @09bf
+        RECS 1              ; used by PUT
+        REC  MISSILES,  240,    0,  -40,   0
+recs_925_missiles:        ; @09c5
+        RECS 1              ; used by PUT+WAVE
+        REC  MISSILES,  240,    0,   40,   0
+recs_92b_bid_kero:        ; @09cb
+        RECS 3              ; used by PUT
+        REC  BID_KERO,  240,    0,   40,   0
+        REC  MINE_AIR,  240,    0,   80,   0
+        REC  MINE_AIR,  240,    0,    0,   0
+recs_93b_bid_kero:        ; @09db
+        RECS 3              ; used by PUT+WAVE
+        REC  BID_KERO,  240,    0,  -40,   0
+        REC  MINE_AIR,  240,    0,  -80,   0
+        REC  MINE_AIR,  240,    0,    0,   0
+recs_94b_missiles:        ; @09eb
+        RECS 4              ; used by PUT+WAVE
+        REC  MISSILES,  240,    0,   60,   0
+        REC  MISSILES,  240,    0,   20,   0
+        REC  MISSILES,  240,    0,  -20,   0
+        REC  MISSILES,  240,    0,  -60,   0
+recs_960_bid_fuel:        ; @0a00
+        RECS 4              ; used by PUT
+        REC  BID_FUEL,  240,    0,   60,   0
+        REC  BID_KERO,  240,    0,   20,   0
+        REC  BID_FUEL,  240,    0,  -20,   0
+        REC  BID_KERO,  240,    0,  -60,   0
+recs_975_rider:        ; @0a15
+        RECS 4              ; used by PUT
+        REC  RIDER,     240,    0,   30,  12
+        REC  RIDER,     240,    0,  -30,  12
+        REC  RIDER,     200,    0,   60,  12
+        REC  RIDER,     200,    0,  -60,  12
+recs_98a_rider:        ; @0a2a
+        RECS 4              ; used by PUT
+        REC  RIDER,     255,    0,   70,  12
+        REC  RIDER,     240,    0,   70,  12
+        REC  RIDER,     225,    0,   70,  12
+        REC  RIDER,     210,    0,   70,  12
+recs_99f_side_car:        ; @0a3f
+        RECS 4              ; used by PUT
+        REC  SIDE_CAR,  255,    0,    0,  12
+        REC  RIDER,     230,    0,  -40,  12
+        REC  RIDER,     230,    0,   40,  12
+        REC  RIDER,     200,    0,    0,  12
+recs_9b4_side_car:        ; @0a54
+        RECS 4              ; used by PUT
+        REC  SIDE_CAR,  255,    0,  -30,  12
+        REC  SIDE_CAR,  255,    0,   30,  12
+        REC  RIDER,     230,    0,  -60,  12
+        REC  RIDER,     230,    0,   60,  12
+recs_9c9_side_car:        ; @0a69
+        RECS 3              ; used by PUT
+        REC  SIDE_CAR,  255,    0,    0,  12
+        REC  SIDE_CAR,  220,    0,  -70,  12
+        REC  SIDE_CAR,  220,    0,   70,  12
+recs_9d9_jeep_1:        ; @0a79
+        RECS 4              ; used by PUT
+        REC  JEEP_1,    240,    0,  -15,  12
+        REC  JEEP_1,    255,    0,   15,  12
+        REC  JEEP_1,    230,    0,   45,  12
+        REC  JEEP_1,    215,    0,   60,  12
+recs_9ee_jeep_1:        ; @0a8e
+        RECS 4              ; used by PUT
+        REC  JEEP_1,    255,    0,  -70,  12
+        REC  JEEP_1,    220,    0,  -70,  12
+        REC  JEEP_1,    255,    0,   70,  12
+        REC  JEEP_1,    220,    0,   70,  12
+recs_a03_jeep_2:        ; @0aa3
+        RECS 4              ; used by PUT
+        REC  JEEP_2,    255,    0,  -20,  12
+        REC  JEEP_2,    255,    0,   50,  12
+        REC  JEEP_2,    220,    0,   10,  12
+        REC  JEEP_2,    220,    0,   80,  12
+recs_a18_jeep_3:        ; @0ab8
+        RECS 4              ; used by PUT
+        REC  JEEP_3,    255,    0,   10,  12
+        REC  JEEP_3,    240,    0,   10,  12
+        REC  JEEP_3,    225,    0,   10,  12
+        REC  JEEP_3,    210,    0,   10,  12
+recs_a2d_jeep_3:        ; @0acd
+        RECS 2              ; used by PUT
+        REC  JEEP_3,    240,    0,   40,  12
+        REC  JEEP_3,    240,    0,  -40,  12
+recs_a38_walker:        ; @0ad8
+        RECS 2              ; used by PUT
+        REC  WALKER,    240,    0,   60,   0
+        REC  FLYING_H,  240,   70,  -60,   0
+recs_a43_flying_h:        ; @0ae3
+        RECS 2              ; used by PUT
+        REC  FLYING_H,  240,   70,   60,   0
+        REC  FLYING_H,  240,   70,  -60,   0
+recs_a4e_mirador:        ; @0aee
+        RECS 1              ; used by PUT
+        REC  MIRADOR,   250,    0,   90,   0
+recs_a54_mirador:        ; @0af4
+        RECS 1              ; used by PUT
+        REC  MIRADOR,   250,    0,  -90,   0
+recs_a5a_canon2:        ; @0afa
+        RECS 2              ; used by PUT
+        REC  CANON2,    250,    0,  -90,   0
+        REC  CANON2,    250,    0,   90,   0
+recs_a65_poule:        ; @0b05
+        RECS 1              ; used by PUT
+        REC  POULE,     240,   70,   30,  14
+recs_a6b_walker:        ; @0b0b
+        RECS 1              ; used by PUT
+        REC  WALKER,    240,    0,  -40,   0
+recs_a71_walker:        ; @0b11
+        RECS 2              ; used by PUT
+        REC  WALKER,    240,    0,  -40,   0
+        REC  WALKER,    240,    0,   40,   0
+recs_a7c_sucker:        ; @0b1c
+        RECS 1              ; used by PUT
+        REC  SUCKER,    240,   20,    0,  14
+recs_a82_b_aimant:        ; @0b22
+        RECS 2              ; used by PUT+WAVE
+        REC  B_AIMANT,  240,    0,  -64,   0
+        REC  BOMBE_TH,  240,    0,   64,   0
+recs_a8d_bombe_th:        ; @0b2d
+        RECS 3              ; used by PUT
+        REC  BOMBE_TH,  240,    0,   64,   0
+        REC  BOMBE_TH,  240,    0,  -64,   0
+        REC  B_AIMANT,  255,    0,    0,   0
+recs_a9d_b_aimant:        ; @0b3d
+        RECS 1              ; used by WAVE
+        REC  B_AIMANT,  240,    0,   64,   0
+recs_aa3_b_aimant:        ; @0b43
+        RECS 2              ; used by PUT
+        REC  B_AIMANT,  240,    0,   64,   0
+        REC  B_AIMANT,  240,    0,  -64,   0
+recs_aae_bombe_th:        ; @0b4e
+        RECS 1              ; used by PUT+WAVE
+        REC  BOMBE_TH,  240,    0,   64,   0
+recs_ab4_bombe_th:        ; @0b54
+        RECS 1              ; used by PUT
+        REC  BOMBE_TH,  240,    0,  -64,   0
+recs_aba_bombe_th:        ; @0b5a
+        RECS 2              ; used by PUT
+        REC  BOMBE_TH,  240,    0,   64,   0
+        REC  BOMBE_TH,  240,    0,  -64,   0
+unused_ac5:        ; @0b65  ; unreachable (cut content), kept verbatim
+        ; (dead) RECS 4           -- orphaned record block (cut content)
+        ; (dead) REC  BOMBE_TH,  240,    0,   90,   0
+        ; (dead) REC  BOMBE_TH,  240,    0,  -90,   0
+        ; (dead) REC  BID_FUEL,  240,    0,   40,   0
+        ; (dead) REC  BID_FUEL,  240,    0,  -40,   0
+        DEFB 0x04,0x1F,0xF0,0x00,0x5A,0x00,0x1F,0xF0,0x00,0xA6,0x00,0x02
+        DEFB 0xF0,0x00,0x28,0x00,0x02,0xF0,0x00,0xD8,0x00
+recs_ada_jumper:        ; @0b7a
+        RECS 2              ; used by PUT
+        REC  JUMPER,    200,    0,  -20,   0
+        REC  JUMPER,    180,    0,   20,   0
+recs_ae5_jumper:        ; @0b85
+        RECS 4              ; used by PUT
+        REC  JUMPER,    205,    0,  -20,   0
+        REC  JUMPER,    205,    0,   20,   0
+        REC  JUMPER,    255,    0,   50,   0
+        REC  JUMPER,    255,    0,  -50,   0
+recs_afa_flying_h:        ; @0b9a
+        RECS 1              ; used by PUT
+        REC  FLYING_H,  240,    0,   20,   0
+recs_b00_mouchard:        ; @0ba0
+        RECS 3              ; used by PUT
+        REC  MOUCHARD,  240,   20,    0,   8
+        REC  MOUCHARD,  230,    0,    0,   8
+        REC  MOUCHARD,  220,   80,    0,   8
+recs_b10_mouchard:        ; @0bb0
+        RECS 4              ; used by PUT
+        REC  MOUCHARD,  240,   20,    0,   8
+        REC  MOUCHARD,  230,    0,    0,   8
+        REC  MOUCHARD,  220,   80,    0,   8
+        REC  MOUCHARD,  200,   60,    0,   8
+recs_b25_milice1:        ; @0bc5
+        RECS 1              ; used by PUT
+        REC  MILICE1,     0,    0,    0,   0
+recs_b2b_milice2:        ; @0bcb
+        RECS 1              ; used by PUT
+        REC  MILICE2,     0,    0,    0,   0
+recs_b31_flying_m:        ; @0bd1
+        RECS 1              ; used by PUT
+        REC  FLYING_M,    0,    0,    0,   0
+recs_b37_flying_m:        ; @0bd7
+        RECS 2              ; used by PUT
+        REC  FLYING_M,    0,    0,    0,   0
+        REC  MILICE2,     0,    0,    0,   0
+recs_b42_milice_i:        ; @0be2
+        RECS 1              ; used by PUT
+        REC  MILICE_I,    0,    0,    0,   0
+recs_b48_pot_gun:        ; @0be8
+        RECS 1              ; used by PUT+WAVE
+        REC  POT_GUN,   240,   60,   60,  12
+unused_b4e:        ; @0bee  ; unreachable (cut content), kept verbatim
+        ; (dead) RECS 2           -- orphaned record block (cut content)
+        ; (dead) REC  POT_GUN,   240,   60,   60,  12
+        ; (dead) REC  POT_GUN,   240,   60,  -60,  12
+        DEFB 0x02,0x2C,0xF0,0x3C,0x3C,0x0C,0x2C,0xF0,0x3C,0xC4,0x0C
+recs_b59_eclair_1:        ; @0bf9
+        RECS 3              ; used by PUT
+        REC  ECLAIR_1,    0,   60,  -40,  20
+        REC  ECLAIR_1,    0,   70,    0,  20
+        REC  ECLAIR_1,    0,   60,   40,  20
+recs_b69_helicop:        ; @0c09
+        RECS 2              ; used by PUT+WAVE
+        REC  HELICOP,   255,    0,    0,   0
+        REC  HELICOP,   230,    0,    0,   0
+recs_b74_gribouy:        ; @0c14
+        RECS 1              ; used by WAVE
+        REC  GRIBOUY,   255,    0,    0,   0
+recs_b7a_speed_b:        ; @0c1a
+        RECS 1              ; used by WAVE
+        REC  SPEED_B,   255,    0,   30,   0
+recs_b80_speed_b:        ; @0c20
+        RECS 4              ; used by PUT
+        REC  SPEED_B,   255,    0,   30,   0
+        REC  SPEED_B,   255,    0,  -30,   0
+        REC  SPEED_B,   235,    0,   70,   0
+        REC  SPEED_B,   235,    0,  -70,   0
+recs_b95_fire_b:        ; @0c35
+        RECS 1              ; used by WAVE
+        REC  FIRE_B,    255,    0,  -50,   0
+recs_b9b_fiery_b:        ; @0c3b
+        RECS 1              ; used by WAVE
+        REC  FIERY_B,   255,   60,    0,   0
+recs_ba1_fiery_b:        ; @0c41
+        RECS 2              ; used by PUT
+        REC  FIERY_B,   255,   60,    0,   0
+        REC  FIERY_B,   255,   60,   64,   0
+recs_bac_bomber_2:        ; @0c4c
+        RECS 1              ; used by PUT
+        REC  BOMBER_2,    0,  110,  -30,   0
+recs_bb2_bomber:        ; @0c52
+        RECS 1              ; used by PUT
+        REC  BOMBER,      0,   90,   60,   0
+recs_bb8_bomber:        ; @0c58
+        RECS 2              ; used by PUT
+        REC  BOMBER,      0,   90,   60,   0
+        REC  BOMBER,      0,   90,  -60,   0
+recs_bc3_banzai:        ; @0c63
+        RECS 1              ; used by PUT+WAVE
+        REC  BANZAI,    255,    0,    0,   0
+unused_bc9:        ; @0c69  ; unreachable (cut content), kept verbatim
+        ; (dead) RECS 2           -- orphaned record block (cut content)
+        ; (dead) REC  BOMBER_2,    0,  114,    0,   0
+        ; (dead) REC  TANK2,       1,   94,    0,   0
+        DEFB 0x02,0x32,0x00,0x72,0x00,0x00,0x13,0x01,0x5E,0x00,0x00
+recs_bd4_b_citern:        ; @0c74
+        RECS 1              ; used by PUT
+        REC  B_CITERN,  240,    0,    0,  12
+recs_bda_bl_mines:        ; @0c7a
+        RECS 1              ; used by PUT
+        REC  BL_MINES,  240,    0,    0,  12
+recs_be0_bl_radar:        ; @0c80
+        RECS 4              ; used by PUT
+        REC  BL_RADAR,  240,    0,    0,  12
+        REC  GARDE_DC,  240,   20,    0,  12
+        REC  GARDE_DC,  240,   20,   10,  12
+        REC  GARDE_DC,  240,   20,   21,  12
+recs_bf5_t66:        ; @0c95
+        RECS 1              ; used by PUT
+        REC  T66,       255,    0,    0,   0
+recs_bfb_bl_missi:        ; @0c9b
+        RECS 1              ; used by PUT
+        REC  BL_MISSI,  240,    0,    0,  12
+recs_c01_bl_tete:        ; @0ca1
+        RECS 2              ; used by PUT
+        REC  BL_TETE,   240,    0,    0,  12
+        REC  GARDE_DC,  240,    0,    0,  12
+recs_c0c_t78:        ; @0cac
+        RECS 1              ; used by PUT
+        REC  T78,       250,    0,    0,   0

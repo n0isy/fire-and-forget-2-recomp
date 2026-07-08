@@ -48,6 +48,12 @@ add_executable(ff2game
     game/decor_ring.c
     game/shape_gen.c
     game/path_vm.c
+    game/data/wave_data.c
+    game/data/enemies.c
+    game/data/shapes.c
+    game/data/road.c
+    game/data/ui.c
+    game/data/misc.c
     render/font.c
     ${FF2_CORE}
 )

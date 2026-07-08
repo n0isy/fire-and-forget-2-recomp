@@ -21,7 +21,7 @@
  * 1->bit0.  A single-plane write (clouds, Map Mask 2) only toggles colour bit 1.
  */
 #include "ff_game.h"
-#include "gmem.h"
+#include "gnames.h"
 #include "../asset/ff_assets.h"
 #include <string.h>
 #include <stdio.h>
@@ -106,7 +106,7 @@ void draw_mountains(void)
 {
     if (!g_decor_ok) return;
 
-    u16 cd60        = GW(0xEF50);
+    u16 cd60        = Gw_mtn_scroll;
     int slot        = (cd60 >> 4) & g_mtn_mask;
     int scroll_byte = (cd60 & 0x7FFF) >> 7;
     const u8 *src   = g_decor + (long)slot * SLOT_BYTES;
@@ -207,7 +207,8 @@ void draw_clouds(void)
 
     static const int heights[5]  = { 24, 18, 13, 10, 7 };
     static const long band_add[5]= { 0, 0x180, 0x2A0, 0x370, 0x410 };
-    const u16 accum[5] = { GW(0xEA40), GW(0xEA42), GW(0xEA44), GW(0xEA46), GW(0xEA48) };
+    const u16 accum[5] = { Gw_cloud_acc0, Gw_cloud_acc1, Gw_cloud_acc2,
+                           Gw_cloud_acc3, Gw_cloud_acc4 };
 
     int screen_y = PF_Y;                       /* clouds start at screen row 48 */
     for (int b = 0; b < 5; ++b) {
