@@ -52,6 +52,15 @@
 #include "gnames.h"
 #include "data/gamedata.h"   /* ffd_demo_tape / ffd_persp_ramp / ffd_pal_* */
 #include <string.h>
+#include <stdlib.h>          /* getenv (the FF2_SND_ENTRY calibration knob) */
+
+/* measured ISR ticks between the race-song trigger and frame anchor 1 minus
+ * the normal 5 (the entry spin + the first-frame spiral reveal; see
+ * run_level_init). Calibrated vs qemu/cap660_adlib/snd.csv: 45 = 9 extra
+ * frame periods — the 10-ring spiral reveal minus the frame's own flip. */
+#define SND_ENTRY_TICKS_DEFAULT 45
+static int s_snd_entry_pending;   /* extra frame-0 ticks (set by run_level_init) */
+static int s_exit_once;           /* bVar4 — the F5 EXIT block's race-scoped one-shot */
 
 /* bFFFFFFFE — run_level stack-local "READY-FOR-TAKE-OFF armed once" latch (the
  * msg-2 trigger fires on the rising edge of di_1195>=0xC0). Reset on level entry. */
@@ -344,6 +353,23 @@ void run_level_init(void)
     /* fn0BA8_13FD(ds, 1): arm the wave VM + path VM and run one dispatch (the
      * script's SETDIST 0x2710 prologue), exactly as the original init does. */
     vm_arm();
+
+    /* fn1069_0006 prologue @1146: the STAGE SONG — fn143A_05B7(t27C7+10, 1)
+     * replaces the whole song stack (a full voice/tempo reset; only the OPL
+     * 0xBD shadow persists). The original's FIRST frame then runs extra ISR
+     * ticks before anchor 1: the entry spin (`t24F1=3; while(==3);` @0119)
+     * + the race first-frame SPIRAL REVEAL (fn0869_0006 @1928-1936, 10 ring
+     * syncs = ~10 frame periods while the logic blocks). The headless paths
+     * don't animate the reveal, so the tick count is injected here as a
+     * measured constant (calibrated vs the QEMU sound capture, exactly like
+     * the s_isr18 ISR phase; FF2_SND_ENTRY overrides for calibration). */
+    snd_sfx_trigger((int)Gw_stage + 10, 1);
+    {
+        const char *e = getenv("FF2_SND_ENTRY");
+        s_snd_entry_pending = e ? atoi(e) : SND_ENTRY_TICKS_DEFAULT;
+    }   /* consumed inside frame 0 (run_level_frame), matching the original's
+         * anchor-0 (pre-spin/pre-reveal) state at the frame-0 dump point */
+    s_exit_once = 0;                              /* bVar4 re-armed per race */
 }
 
 /* ========================================================================== */
@@ -504,8 +530,12 @@ static void panel_objective_triggers(void)
         } else if ((Gw_objective_lo | Gw_objective_hi) != 0x00) {   /* objective distance left */
             if (Gb_panel_msg != 0x00) { Gb_panel_state = 0x01; Gb_panel_msg = 0x00; }  /* BEFORE VISUAL */
         } else {
-            if (Gb_obj_sfx_latch == 0x00 && Gw_flash_timer == 0x00 && (i16)Gw_lives >= 0)
-                Gb_obj_sfx_latch = 0x01;     /* fn143A_05B7 objective sound — skipped */
+            if (Gb_obj_sfx_latch == 0x00 && Gw_flash_timer == 0x00 && (i16)Gw_lives >= 0) {
+                Gb_obj_sfx_latch = 0x01;
+                snd_sfx_trigger(5, 1);       /* LEADER-SPOTTED fanfare (@1897)  */
+                if (Gb_leader_sfx != 0x00)   /* d4ec: crashed before -> alarm   */
+                    snd_sfx_queue(4);        /* fn143A_0643(4) @1899            */
+            }
             if (Gb_panel_msg != 0x06) { Gb_panel_state = 0x01; Gb_panel_msg = 0x06; }  /* LEADER SPOTTED */
         }
     }
@@ -549,7 +579,7 @@ static void player_fire_step(void)
             u32 z = (((u32)Gw_dist_hi << 16) | Gw_dist_lo) + 3;
             *(u16 *)(p + 0x15) = (u16)z;
             *(u16 *)(p + 0x17) = (u16)(z >> 16);
-            /* fn143A_027B(0) gun sfx — omitted */
+            snd_sfx_play(0x00);                         /* fn143A_027B(0) gun */
         }
     }
 
@@ -570,7 +600,7 @@ static void player_fire_step(void)
             u32 z = (((u32)Gw_dist_hi << 16) | Gw_dist_lo) + 3 - Gw_speed;
             *(u16 *)(p + 0x15) = (u16)z;
             *(u16 *)(p + 0x17) = (u16)(z >> 16);
-            /* fn143A_027B(0x14) missile sfx — omitted */
+            snd_sfx_play(0x14);                     /* fn143A_027B(0x14) missile */
         }
     }
 }
@@ -600,10 +630,11 @@ static void car_column_step(void)
             if (s_lean_acc == -1) s_lean_acc = 0; else s_lean_acc >>= 1;
         }
         /* @1654-1656: wheel-dust when cornering hard. The `local_24=0x3b-24ff`
-         * assignment is UNCONDITIONAL on 24ff (24ff only gates the omitted sfx). */
-        if (Gw_speed != 0 && (si_2063 > 3 || si_2063 < -3))
+         * assignment is UNCONDITIONAL on 24ff; 24ff gates the screech SFX. */
+        if (Gw_speed != 0 && (si_2063 > 3 || si_2063 < -3)) {
             g_dust = 0x3B - (i16)Gw_blink;
-        /* (engine-screech sound at @643-648 omitted) */
+            if (Gw_blink != 0) snd_sfx_play(4);   /* corner screech (@1657) */
+        }
         g_car_row = 4;                             /* local_30 = 4 */
         if (col < 0) col = 0; else if (col > 9) col = 9;   /* @1659: clamp (case 0 only) */
     } else if (Gw_game_mode == 0x01) {              /* switch#2 case 0x11303 (FLIGHT) */
@@ -657,6 +688,9 @@ static void player_hit_step(void)
     if (Gb_player_hit != 0x00) {                              /* bF6B1 (d4c1) set */
         if (Gw_game_mode != 0x04 && (i16)Gw_lives >= 0) {  /* not crash + has lives */
             if (Gw_flash_timer == 0x00) {                      /* wF6A9 flash timer == 0 -> CRASH */
+                if ((i16)Gw_lives == 0)                    /* last vehicle: game-over song */
+                    snd_sfx_trigger(8, 1);                 /* fn143A_05B7(8,1) @1193 */
+                snd_sfx_queue(0);                          /* crash SFX @1195 */
                 Gb_crash_ctr = 0x18;                         /* bc7d = 0x18 crash counter */
                 s_lean_acc = 0;                            /* wFFFFFFEC = 0 (reko 0869 @161; the car-lean
                                                             * accumulator is RESET by the crash — without it
@@ -664,11 +698,16 @@ static void player_hit_step(void)
                                                             * respawn: the wrong banked car after the stage-2
                                                             * fuel-out crash, unfiltered test 2 f3347+) */
                 s_lean_dir = 0;                            /* wFFFFFFF0 = 0 (reko 0869 @162) */
+                Gb_leader_sfx = 0x01;                      /* d4ec = 1 (@1196): "crash SFX
+                                                            * played" latch — the LEADER-
+                                                            * SPOTTED block queues the alarm
+                                                            * (0643(4)) only when set */
                 if (Gb_player_hit == 0x02 && (i16)Gw_lives >= 0) Gw_lives = 0;  /* hard hit -> lives 0 */
             } else {                                       /* already flashing: cockpit flash */
                 Gw_cflash_spr = 0x2E;                         /* ce95 */
                 Gw_cflash_x = (u16)((i16)Gw_car_x + 0xA0);  /* bc77 */
                 Gw_cflash_y = (u16)((i16)Gw_horizon + 0x18);  /* bc7b */
+                snd_sfx_play(0x13);                        /* explosion one-shot (@1207) */
             }
         }
         Gb_player_hit = 0x00;                                  /* clear the hit flag */
@@ -729,6 +768,8 @@ int run_level_frame(void)
          * does NOT advance to stage 2 (verified vs QEMU: DC6E=0 at the return @2041). */
         Gw_fuel_window = 0x00;                  /* ba7c invuln_timer = 0 */
         if (Gb_demo_flag != 0x00) {           /* bDC6F demo flag */
+            if (Gb_demo_abort != 0x00)          /* d4c3: demo aborted by a key */
+                snd_sfx_trigger(6, 1);          /* -> the menu/boot song       */
             Gw_score_lo = 0x00; Gw_score_hi = 0x00;   /* score = 0 */
             Gb_stage_clear = 0x00;              /* anim_step = 0 → death branch */
         }
@@ -794,6 +835,8 @@ int run_level_frame(void)
             if (Gw_flash_timer == 0 && Gw_flash_colour == 0x0D) {
                 if (Gw_objective_lo == 0 && Gw_objective_hi == 0 && Gb_obj_sfx_latch == 0)
                     Gb_leader_sfx = 0x01;
+                else
+                    snd_sfx_trigger(4, 0);   /* alarm into the stack top (@1802) */
             }
         }
         if (Gw_game_mode == 0x01) {
@@ -803,7 +846,10 @@ int run_level_frame(void)
         } else {
             Gw_fuel_window -= 1;
             if (Gw_fuel_window == 0) {
-                if (Gw_flash_timer != 0) Gw_flash_timer = 0;   /* + sfx, omitted */
+                if (Gw_flash_timer != 0) {                 /* @1818: alarm + kill flash */
+                    snd_sfx_trigger(4, 1);
+                    Gw_flash_timer = 0;
+                }
                 Gb_player_hit = 0x01;
                 if (Gb_panel_msg != 0x05) {
                     Gb_panel_state = 0x01;
@@ -901,6 +947,34 @@ int run_level_frame(void)
     /* 1069:0006 @982: blink parity toggles once per frame (after the flip). */
     Gw_blink ^= 0x01;
 
+    /* 1069:0006 @1940-1958 — the in-race F5 EXIT block (found by the sound
+     * call-site audit; was never ported). b40A2 = the INT9 toggle[F5]
+     * (0x4063 + scancode 0x3F): when set, once per race (bVar4): cancel the
+     * stage-clear flag, kill the damage flash, arm panel msg 9 "EXIT"
+     * (delay 0x14), lives = 0 + HARD hit (d4c1=2 -> the crash path ends the
+     * race), flight -> landing, and the GAME-OVER song trigger(8,1). With
+     * LEFT-ALT held (keystate[0x38]) the race ends IMMEDIATELY (local_38=0)
+     * and the demo-abort flag is set. */
+    if (Gb_exit_flag != 0x00 && !s_exit_once) {
+        Gb_stage_clear = 0x00;                     /* ba7e anim_step = 0     */
+        s_exit_once = 1;                           /* bVar4                  */
+        Gw_flash_timer = 0x00;                     /* d4b9 = 0               */
+        Gb_exit_flag = 0x00;                       /* consume the toggle     */
+        if (Gb_panel_msg != 0x09) {                /* msg 9 = EXIT           */
+            Gb_panel_msg = 0x09;
+            Gb_panel_state = 0x01;
+            Gb_panel_delay = 0x14;
+        }
+        Gw_lives = 0x00;                           /* ba78 = 0               */
+        Gb_player_hit = 0x02;                      /* d4c1 = 2 (hard hit)    */
+        if (Gw_game_mode == 0x01) Gw_game_mode = 0x03;   /* flight -> landing */
+        snd_sfx_trigger(8, 1);                     /* the game-over song     */
+        if (g_keystate[0x38] != 0x00) {            /* LEFT ALT: instant exit */
+            s_local38 = 0;
+            Gb_demo_abort = 0x01;                  /* d4c3                   */
+        }
+    }
+
     /* @983-984: ++wFFFFFFC0 (20-frame cycle) and ++wFFFFFFC2 (frames since the
      * last t24F1 tick); then the timer-ISR tick — the dec lands in this frame's
      * page-flip WAIT (after the @879 gate), so the gate observes it NEXT frame
@@ -911,5 +985,13 @@ int run_level_frame(void)
         s_isr18 = 0;
         Gi_tick_timer -= 1;                        /* dec word [24F1] — signed */
     }
+
+    /* the frame's 5 music-ISR ticks — AFTER all game logic (under QEMU TCG the
+     * logic executes in ~zero virtual time right after the frame-boundary
+     * tick, so every sound trigger above lands before the first tick; see
+     * game/sound.c). Frame 0 additionally burns the measured entry-spin +
+     * spiral-reveal ticks (SND_ENTRY_TICKS_DEFAULT). */
+    if (s_snd_entry_pending) { snd_run_ticks(s_snd_entry_pending); s_snd_entry_pending = 0; }
+    snd_frame();
     return 1;                                    /* a race frame ran this call */
 }

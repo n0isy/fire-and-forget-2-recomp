@@ -16,6 +16,7 @@ game/game_main.c game/dgroup.c game/entity_dispatch.c game/entity_faithful.c gam
 game/vm.c game/player_render.c game/render_world.c game/run_level.c game/keyboard.c game/camera_faithful.c \
 game/bg_layers.c game/panel_text.c game/sprite_dl.c game/hud_cockpit.c game/display_init.c \
 game/frontend.c game/cutscene.c game/decor_ring.c game/shape_gen.c game/path_vm.c \
+game/sound.c game/data/sound.c platform/opl.c third_party/nuked_opl3/opl3.c \
 game/data/wave_data.c game/data/enemies.c game/data/shapes.c game/data/road.c \
 game/data/ui.c game/data/misc.c \
 render/font.c platform/platform_sdl.c asset/depack.c asset/ilbm.c render/bob.c"

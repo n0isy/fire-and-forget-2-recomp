@@ -152,6 +152,24 @@ void draw_mountains(void);  /* fn10EF_0307 — 16-row horizon band, h-scroll    
 /* PRNG seed (game/behaviors.c) — fn0A0D_02D3, called once at startup by main. */
 void ff_rng_seed(void);
 
+/* ---- AdLib sound driver (game/sound.c — the segment 143A port) ------------
+ * Output = the OPL register write stream (opl_write -> ff_opl_out platform
+ * sink + optional log); the acceptance comparison is that stream + the
+ * per-frame voice state, not audio samples. One presented frame = 5 music
+ * ticks, run AFTER the frame's game logic (snd_frame). */
+void snd_init(void);                 /* fn143A_0349 AdLib branch + boot song  */
+void snd_frame(void);                /* 5 ISR ticks; call once per frame      */
+void snd_run_ticks(int n);           /* extra ticks (the run_level entry spin) */
+void snd_sfx_trigger(int id, int r); /* fn143A_05B7: replace the song stack   */
+void snd_sfx_queue(int id);          /* fn143A_0643: push onto the song stack */
+void snd_sfx_play(int id);           /* fn143A_027B: one-shots (F3-gated)     */
+void snd_toggle_mute(void);          /* the F2 toggle (b409F)                 */
+void snd_toggle_oneshot(void);       /* the F3 toggle (b40A0)                 */
+int  snd_muted(void);                /* b409F != 0 (read by fn1069_13c0)      */
+void snd_set_log(void *fp);          /* FILE*: 'W,frame,seq,reg,val' lines    */
+void snd_state_row(char *out, int cap);  /* per-frame state CSV tail          */
+u32  snd_frame_no(void);
+
 /* high-score table load (game/game_main.c) — fn13a8_12f4: read the HIGH file into
  * the DGROUP table @0x27d9 (the scores are NOT in the static blob) + set 27cd/27cf. */
 void ff_load_high(const char *asset_dir);

@@ -17,9 +17,16 @@ Every reconstructed subsystem was verified against the real game running under Q
 - all 81 enemy behaviour handlers, the level script VM, the runtime sprite composer, the
   takeoff/flight/landing modes, stages 1–5 content, the nuclear cutscene, the highscore
   name entry and the arcade attract loop are ported and bit-verified — even two genuine
-  ROM quirks of the original blitter are reproduced.
+  ROM quirks of the original blitter are reproduced;
+- **sound is ported and bit-verified too**: the AdLib/OPL2 driver (an in-house byte-code
+  music sequencer + a song stack for SFX, not MIDI) is reconstructed from the original's
+  timer ISR, and the acceptance test compares the **OPL register write stream** against
+  the real game — bit-identical over a zero-input run (26 283 writes) and a 1.5-level
+  play-through, modulo one interrupt race the original hardware itself exhibits. Audio
+  is synthesized with the vendored Nuked-OPL3 core (native SDL2 and WebAudio alike).
 
-**Not ported yet:** sound (AdLib / PC speaker) — the only missing subsystem.
+**Not ported yet:** the PC-speaker fallback branch (tone SFX + the engine drone) — only
+reachable on a machine without an AdLib card.
 
 ## You need the original game's graphics
 
@@ -65,6 +72,8 @@ Browser (needs the [emscripten SDK](https://emscripten.org)):
 | **FIRE** — machine gun; in the menu: insert coin | `Space` or `Ctrl` | 🔫 button |
 | **START·FLY** — start; at full throttle: take off / land | `Enter` or `Shift` | ▲ button |
 | **MISSILE** — FIRE+START together (uses fuel) | chord | 🚀 button |
+| Music on/off · extra percussion SFX | `F2` · `F3` | — |
+| Abort the race (the original's exit key) | `F5` | — |
 | Restart (web) / quit (native) | `Esc` | — |
 
 On touch devices the on-screen controls appear automatically (append `?touch` to the URL
@@ -75,6 +84,7 @@ to force them). A fullscreen button sits in the top-right corner.
 ```
 src/            the reconstructed engine (C11), one module per original subsystem
 src/game/data/  the DGROUP game‑logic data, reconstructed as typed C source
+src/third_party/nuked_opl3/  vendored OPL2/3 synthesizer core (LGPL-2.1)
 src/CMakeLists.txt
 wave/           level scripts in the recovered wave DSL (source of wave_data.c)
 tools/          reconstruction tooling (wave (dis)assembler, extractors, Ghidra scripts)
@@ -114,6 +124,13 @@ committed `wave_data.c` is its build product (regenerate with
 `tools/` are `pp20_unpack.py` / `bob_extract.py`, standalone decoders for the CPT
 graphics. See [`tools/README.md`](tools/README.md).
 
+The **music** is the same story: the original embeds an in-house byte-code sequencer
+(notes + GOSUB/LOOP/RETURN/JUMP flow control per voice) driving the OPL2 registers
+directly. The song streams, instrument patches and the song/SFX table ship as typed
+source in `src/game/data/sound.c`; the driver (`src/game/sound.c`) is transliterated
+from the original timer ISR and verified by bit-comparing its OPL register write
+stream against the real game running under QEMU.
+
 ## Legal
 
 This is an unofficial fan preservation / research project, not affiliated with or endorsed
@@ -124,3 +141,5 @@ those from your own copy to play. The engine and its data tables are an original
 transliteration of the disassembled game, provided for educational and preservation purposes.
 
 [nipplejs](https://github.com/yoannmoinet/nipplejs) is MIT-licensed.
+[Nuked-OPL3](https://github.com/nukeykt/Nuked-OPL3) (the OPL2/3 synthesizer core,
+vendored at `src/third_party/nuked_opl3/`) is LGPL-2.1 — see its bundled LICENSE.

@@ -73,6 +73,18 @@ void ff_keystate_update(void)
     ks(SC_DOWN,  GC.input[FF_K_DOWN]);
     ks(SC_LEFT,  GC.input[FF_K_LEFT]);
     ks(SC_RIGHT, GC.input[FF_K_RIGHT]);
+
+    /* the INT9 sound/exit toggles (`toggle[sc] ^= 0xFF` on each key PRESS,
+     * ndisasm @114C:00E0): F2 -> b409F (mute all OPL writes), F3 -> b40A0
+     * (enable the sfx_play one-shots), F5 -> b40A2 (the in-race EXIT block /
+     * name-entry timeout). Edge-detected here — this IS the port's INT9. */
+    static u8 prev_f2, prev_f3, prev_f5;
+    if (GC.input[FF_K_MUTE] && !prev_f2) snd_toggle_mute();
+    if (GC.input[FF_K_SFX]  && !prev_f3) snd_toggle_oneshot();
+    if (GC.input[FF_K_EXIT] && !prev_f5) Gb_exit_flag ^= 0xFF;
+    prev_f2 = (u8)GC.input[FF_K_MUTE];
+    prev_f3 = (u8)GC.input[FF_K_SFX];
+    prev_f5 = (u8)GC.input[FF_K_EXIT];
 }
 
 /* poll_controls — faithful port of fn0A0D_0002 (120d:0002). Reads the key-state

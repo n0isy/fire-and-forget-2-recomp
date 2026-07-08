@@ -143,8 +143,10 @@ void camera_update(void)
         } else if (w24BB != 0) {                        /* accelerate         */
             g_decel_e6 = 0;                              /* wFFFFFFE6 = 0      */
             if (di_1195 < 0xC0) {
-                if (di_1195 < 0x20)                      /* @1326: kick-off dust */
+                if (di_1195 < 0x20) {                    /* @1326: kick-off dust */
                     g_dust = 0x3B - (i16)Gw_blink;     /* 0x3a/0x3b */
+                    snd_sfx_play(4);                     /* fn143A_027B(4) @1327 */
+                }
                 di_1195 += Gw_throttle_step;
             }
         } else if (w24BD != 0) {                        /* brake              */
@@ -194,12 +196,12 @@ void camera_update(void)
         Gw_horizon = (u16)(0x87 - (((i16)Gw_horizon - 0x87) >> 2));
         g_dust = 0x3C;                                   /* @1441 */
         local_2e = -3 - local_2e / 3;
-        /* FUN_1c3a_027b(0x11) bump sfx — omitted */
+        snd_sfx_play(0x11);                              /* bump sfx (@1443) */
     } else {                                            /* ground/takeoff/land clamp */
         local_2e = -(local_2e / 3);
         Gw_horizon = 0x87;
         g_dust = 0x3B;                                   /* @1448 (landing thump dust) */
-        /* FUN_1c3a_027b(0x0e) sfx — omitted */
+        snd_sfx_play(0x0E);                              /* landing thump (@1449) */
     }
 
     /* ---- speed: clamp throttle to [0,0xFF] IN PLACE (fn1069_0006 @1451-1459:

@@ -13,8 +13,13 @@ extern uint8_t ff_fb[FF_W * FF_H];
 
 /* keys (minimal set for arcade controls).
  * FF_K_START = the aux/"start" button (t24B9): inserts-and-starts in the menu,
- * take-off/missile chord in-race (poll_controls fn0A0D_0002). */
-enum { FF_K_UP, FF_K_DOWN, FF_K_LEFT, FF_K_RIGHT, FF_K_FIRE, FF_K_START, FF_K_ESC, FF_K_COUNT };
+ * take-off/missile chord in-race (poll_controls fn0A0D_0002).
+ * FF_K_MUTE/FF_K_SFX = the original's F2/F3 sound toggles (INT9 toggle array
+ * @0x4063+sc: F2 mutes all OPL writes, F3 enables the one-shot effects). */
+enum { FF_K_UP, FF_K_DOWN, FF_K_LEFT, FF_K_RIGHT, FF_K_FIRE, FF_K_START,
+       FF_K_MUTE, FF_K_SFX, FF_K_EXIT, FF_K_ESC, FF_K_COUNT };
+/* FF_K_EXIT = the original's F5 in-race abort (INT9 toggle b40A2: panel msg 9
+ * "EXIT", lives=0, hard hit -> game over; run_level @1940-1958). */
 
 /* window lifecycle (needed only by the native playable mode) */
 int  ff_init(const char *title, int scale);
@@ -35,5 +40,9 @@ void ff_screenshot_ppm(const char *path, const uint8_t rgb[FF_NCOL][3]);
 
 /* standard EGA palette (16 colors) */
 extern const uint8_t ff_ega_palette[FF_NCOL][3];
+
+/* audio: open the OPL synth output (platform/opl.c — Nuked-OPL3 behind SDL
+ * audio; emscripten routes it through WebAudio). Safe no-op headless. */
+void ff_sound_start(void);
 
 #endif
